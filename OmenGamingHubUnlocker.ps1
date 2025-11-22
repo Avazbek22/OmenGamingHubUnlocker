@@ -1,53 +1,61 @@
-# Tame-OmenAutoStart.ps1
-# Goal:
-#   Keep HP OMEN Gaming Hub installed, but:
-#     - prevent it from auto-starting with Windows
-#     - stop HP/OMEN helper services and tasks from auto-starting
-#     - optionally block ALL network access for every OMEN .exe via Windows Firewall
-#
-# How it works:
-#   1. Ensures the script is running as Administrator (self-elevates if needed).
-#   2. Finds HP/OMEN-related services and sets StartupType to Manual.
-#   3. Finds HP/OMEN-related scheduled tasks and disables them.
-#   4. Scans common Run registry keys and removes HP/OMEN auto-start entries.
-#   5. Finds the OMEN UWP package (AD2F1837.OMENCommandCenter),
-#      locates all .exe files inside its InstallLocation
-#      and creates outbound-blocking firewall rules for them (if enabled).
-#
-# Usage (typical for end users):
-#   - Right-click this .ps1 file > "Run with PowerShell".
-#   - The script will auto-elevate (UAC prompt) and apply changes.
-#
-# Advanced:
-#   - You can toggle the behavior in the CONFIGURATION SECTION below:
-#       DryRun        : if $true, show what will happen but do not change anything.
-#       ManageFirewall: if $false, skip all firewall rule creation.
-#
-# Notes:
-#   - The script does NOT uninstall OMEN Gaming Hub.
-#   - The script does NOT touch drivers or Windows system services.
-#   - Services are set to Manual, so OMEN can still start them when you
-#     launch OMEN Gaming Hub manually (e.g. after enabling a VPN).
-#   - Firewall rules are prefixed with a custom name, so they can be
-#     removed later if needed.
+<# 
+    OmenGamingHubUnlocker.ps1
+
+    Goal:
+      Keep HP OMEN Gaming Hub installed, but:
+        - prevent it from auto-starting with Windows
+        - stop HP/OMEN helper services and tasks from auto-starting
+        - remove HP/OMEN auto-start entries from Run registry keys
+        - optionally block ALL network access for every OMEN .exe via Windows Firewall
+
+    How it works:
+      1. Auto-unblocks itself if marked as "downloaded from the Internet".
+      2. Ensures the script is running as Administrator (self-elevates if needed).
+      3. Finds HP/OMEN-related services and sets StartupType to Manual.
+      4. Finds HP/OMEN-related scheduled tasks and disables them.
+      5. Scans common Run registry keys and removes HP/OMEN auto-start entries.
+      6. Locates the OMEN UWP package (AD2F1837.OMENCommandCenter),
+         finds all .exe files inside its InstallLocation
+         and creates outbound-blocking firewall rules for them (if enabled).
+
+    Typical usage:
+      - Run Run-OmenGamingHubUnlocker.cmd (recommended for end users), OR
+      - Right-click this .ps1 -> "Run with PowerShell".
+      - The script will auto-elevate (UAC prompt) and apply changes.
+
+    Notes:
+      - The script does NOT uninstall OMEN Gaming Hub.
+      - The script does NOT touch drivers or Windows system services.
+      - Services are set to Manual, so OMEN can still start them when you
+        launch OMEN Gaming Hub manually.
+      - Firewall rules are prefixed with a custom name and can be removed later.
+#>
 
 # ========================= CONFIGURATION SECTION ============================
 
-# By default we apply changes immediately:
-#   - services/tasks/Run are modified
-#   - firewall rules are created (if ManageFirewall = $true)
+# If $true, show what would be changed but do NOT modify anything.
+# If $false, apply all changes immediately.
 $DryRun             = $false
 
-# If you want to only tame auto-start without blocking network, set this to $false.
+# If $true, create outbound-blocking firewall rules for OMEN executables.
+# If $false, skip firewall management.
 $ManageFirewall     = $true
 
 # Prefix for firewall rule display names. Used so rules are easy to find/remove.
 $FirewallRulePrefix = "Tame-OMEN"
 
+# ========================= AUTO-UNBLOCK SELF ================================
+
+# If the file is marked as "downloaded from the Internet", silently unblock it.
+try {
+    Unblock-File -Path $PSCommandPath -ErrorAction SilentlyContinue
+}
+catch {
+    # Not critical if this fails.
+}
+
 # ========================= ADMIN ELEVATION CHECK ============================
 
-# This function ensures the script runs as Administrator.
-# If not, it restarts itself with elevated privileges and exits the current process.
 function Ensure-Admin {
     $currentIdentity  = [Security.Principal.WindowsIdentity]::GetCurrent()
     $currentPrincipal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
@@ -58,6 +66,7 @@ function Ensure-Admin {
 
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName  = "powershell.exe"
+        # Important: use ExecutionPolicy Bypass so the script is not blocked in the elevated session.
         $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
         $psi.Verb      = "runas"   # triggers UAC prompt
 
@@ -82,10 +91,9 @@ Write-Host ("DryRun = {0}" -f $DryRun) -ForegroundColor Yellow
 Write-Host ("ManageFirewall = {0}" -f $ManageFirewall) -ForegroundColor Yellow
 
 # ========================= 1. HP / OMEN SERVICES ============================
-# This block:
-#   - collects known HP/OMEN helper services by ServiceName and DisplayName,
-#   - prints them,
-#   - sets their StartupType to Manual (if DryRun = $false).
+
+# Collect known HP/OMEN helper services by ServiceName and DisplayName,
+# print them, and set their StartupType to Manual (if DryRun = $false).
 
 $serviceNames = @(
     "HPAppHelperCap",
@@ -143,7 +151,7 @@ else {
         Write-Host "`nSetting StartupType to Manual..." -ForegroundColor Yellow
         foreach ($svc in $services) {
             try {
-                # We only change StartupType; we do not force-stop running services here.
+                # Only change StartupType; do not forcibly stop running services here.
                 Set-Service -Name $svc.Name -StartupType Manual
                 Write-Host ("OK: {0} -> Manual" -f $svc.Name)
             }
@@ -155,10 +163,9 @@ else {
 }
 
 # ========================= 2. SCHEDULED TASKS ===============================
-# This block:
-#   - finds scheduled tasks whose names/paths indicate HP/OMEN/HSA,
-#   - prints them,
-#   - disables them (if DryRun = $false), so they no longer auto-start OMEN.
+
+# Find scheduled tasks whose names/paths indicate HP/OMEN/HSA,
+# print them, and disable them (if DryRun = $false).
 
 Write-Host "`nScanning HP/OMEN scheduled tasks..." -ForegroundColor Cyan
 
@@ -204,10 +211,9 @@ else {
 }
 
 # ========================= 3. RUN REGISTRY AUTO-START =======================
-# This block:
-#   - inspects common Run keys (HKLM / HKCU, 32/64-bit),
-#   - prints any HP/OMEN-related values,
-#   - removes them (if DryRun = $false), so HP/OMEN will not start from Run.
+
+# Inspect common Run keys (HKLM / HKCU, 32/64-bit),
+# print HP/OMEN-related values and remove them (if DryRun = $false).
 
 Write-Host "`nScanning Run registry keys for auto-start entries..." -ForegroundColor Cyan
 
@@ -233,7 +239,7 @@ foreach ($key in $runKeys) {
 
     $props = Get-ItemProperty -Path $key
     foreach ($property in $props.PSObject.Properties) {
-        # Skip PowerShell's own technical properties
+        # Skip technical PowerShell properties
         if ($property.Name -like "PS*") { continue }
 
         $value = [string]$property.Value
@@ -261,12 +267,12 @@ foreach ($key in $runKeys) {
 }
 
 # ========================= 4. FIREWALL BLOCK FOR OMEN EXEs ==================
-# This block (if ManageFirewall = $true):
-#   - locates the OMEN UWP package (AD2F1837.OMENCommandCenter),
-#   - finds every .exe inside its InstallLocation,
-#   - prints them,
-#   - creates outbound-blocking firewall rules for each .exe (if DryRun = $false).
-# This prevents OMEN from reaching the network at all (for region checks, telemetry, etc.).
+
+# If ManageFirewall = $true:
+#   - locate the OMEN UWP package (AD2F1837.OMENCommandCenter),
+#   - find every .exe inside its InstallLocation,
+#   - print them,
+#   - create outbound-blocking firewall rules for each .exe (if DryRun = $false).
 
 if ($ManageFirewall) {
     Write-Host "`nScanning OMEN Gaming Hub package for executables..." -ForegroundColor Cyan
@@ -322,7 +328,7 @@ if ($ManageFirewall) {
                     }
                 }
                 else {
-                    Write-Host "`nDryRun: firewall rules NOT created. Set `$DryRun = `$false to apply them." -ForegroundColor Yellow
+                    Write-Host "`nDryRun is True: firewall rules were NOT created. Set `$DryRun = `$false to apply them." -ForegroundColor Yellow
                 }
             }
         }
@@ -334,13 +340,11 @@ else {
 
 # ========================= SUMMARY ==========================================
 
-Write-Host "`n=== Done. Reboot and check whether OMEN Gaming Hub still auto-starts and still resolves your region. ===" -ForegroundColor Cyan
+Write-Host "`n=== Done. Reboot and check whether OMEN Gaming Hub still auto-starts and whether your issue is resolved. ===" -ForegroundColor Cyan
 if ($DryRun) {
-    Write-Host "DryRun is True — nothing was changed. If the output looks good," `
-        "edit the script, set `$DryRun = `$false and run it again." -ForegroundColor Yellow
+    Write-Host "DryRun is True: no changes were applied. If the output looks correct, set `$DryRun = `$false and run the script again." -ForegroundColor Yellow
 }
 
-# Keep the window open when launched via “Run with PowerShell”
 Write-Host ""
 Write-Host "Press Enter to close this window..." -ForegroundColor Yellow
 [void](Read-Host)
