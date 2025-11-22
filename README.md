@@ -1,156 +1,203 @@
 # Omen Gaming Hub Unlocker
 
-"Small" PowerShell script that **keeps HP OMEN Gaming Hub installed**, but:
+Small helper script for HP OMEN laptops and desktops.
 
-* stops it from **auto-starting with Windows** (services, tasks, Run keys)
-* optionally blocks **all network access** for every OMEN `.exe` via Windows Firewall
+It **keeps OMEN Gaming Hub installed**, but:
 
-Main idea:
-You can still launch OMEN Gaming Hub **manually after enabling a VPN**, but it will not:
+* stops it from **auto‑starting with Windows**
+* turns HP/OMEN helper services and tasks to "Manual" / disabled
+* removes HP/OMEN auto‑start entries from the registry
+* can (optionally) **block all OMEN .exe files from going online** via Windows Firewall
 
-* wake up on its own at boot,
-* call home and detect that you are in a region like RU,
-* reset its state or lock itself before VPN is active.
+So you can:
+
+1. Boot Windows
+2. Turn on your VPN
+3. Launch **OMEN Gaming Hub** manually
+
+…without OMEN waking up on its own, pinging HP servers first and deciding you are in a "wrong" region.
 
 Tested on **Windows 11** with an **HP OMEN laptop**.
 
 ---
 
-## What the script does
+## What the script actually does (short version)
 
-1. **Ensures Admin rights**
-   If the script is not running elevated, it restarts itself with `runas` (UAC prompt) and exits the non‑admin instance.
+* **Runs as Administrator**
+  If you start it without admin rights, it will relaunch itself with UAC and continue there.
 
-2. **Tames HP/OMEN services**
-   Finds and sets these and similar services to `Manual`:
+* **HP / OMEN services → Manual**
+  Finds typical HP/OMEN telemetry and helper services and changes their startup type to `Manual`, so they no longer auto‑start on boot.
 
-   * `HPAppHelperCap` (HP App Helper HSA Service)
-   * `HPDiagsCap` (HP Diagnostics HSA Service)
-   * `HPNetworkCap` (HP Network HSA Service)
-   * `HPOmenCap` (HP Omen HSA Service)
-   * `HPSysInfoCap` (HP System Info HSA Service)
-   * `HpTouchpointAnalyticsService` (HP Insights / Analytics)
+* **HP / OMEN scheduled tasks → Disabled**
+  Looks for tasks with names like `*Omen*`, `*HP Support Assistant*`, etc., and disables them.
 
-3. **Disables HP/OMEN scheduled tasks**
-   Finds and disables tasks whose names/paths match:
+* **Cleans Run auto‑start entries**
+  Removes HP/OMEN entries from the classic `Run` registry keys (machine + current user), so OMEN is not launched from there.
 
-   * `*Omen*`, `*OMEN*`
-   * `*HP Support Assistant*`, `*HP JumpStart*`, `*HP Wolf*`, `*HP Analytics*`, `*HP HSA*`
+* **(Optional) Blocks OMEN network access**
+  If enabled, finds the `OMENCommandCenter` UWP package, collects all `.exe` files inside and creates outbound blocking rules in Windows Firewall for each one.
 
-   This stops additional auto‑launch attempts from Task Scheduler.
-
-4. **Cleans Run auto‑start registry keys**
-   Scans:
-
-   * `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
-   * `HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run`
-   * `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
-
-   and removes values that look like HP/OMEN auto‑start entries.
-
-5. **Optionally blocks OMEN network access via Firewall**
-   If `ManageFirewall = $true`:
-
-   * Locates the OMEN UWP package: `AD2F1837.OMENCommandCenter`.
-   * Finds **all `.exe` files** under its `InstallLocation`.
-   * Creates outbound‑blocking firewall rules for each `.exe`, named like:
-
-     ```text
-     Tame-OMEN - HP.Omen.OmenCommandCenter.exe
-     Tame-OMEN - OmenBGMonitor.exe
-     Tame-OMEN - OmenCommandCenterBackground.exe
-     ...
-     ```
-
-   This prevents OMEN from talking to the network at all (region checks, telemetry, etc.),
-   even if some OMEN window briefly flickers at login.
-
-6. **Keeps the window open at the end**
-   After finishing, the script prints a summary and waits for **Enter**, so the user can read the output when it was started with "Run with PowerShell".
+* **Shows a summary and waits for Enter**
+  So you can read what happened when running via "Run with PowerShell".
 
 ---
 
-## Configuration
+## Files in this repo
 
-At the top of `OmenGamingHubUnlocker.ps1` there is a small configuration section:
+* **`OmenGamingHubUnlocker.ps1`** – main PowerShell script.
+* **`Run-OmenGamingHubUnlocker.cmd`** – simple launcher that starts the script with a safe `ExecutionPolicy Bypass` (recommended for most users).
+
+---
+
+## Quick start (recommended way)
+
+1. Download both files:
+
+   * `OmenGamingHubUnlocker.ps1`
+   * `Run-OmenGamingHubUnlocker.cmd`
+2. Put them in the same folder (for example, on your Desktop).
+3. Right‑click `Run-OmenGamingHubUnlocker.cmd` → **Run as administrator**.
+   (Or double‑click and then approve the UAC dialog.)
+4. The script will:
+
+   * restart itself as admin if needed,
+   * list found HP/OMEN services, tasks, Run entries and OMEN executables,
+   * apply the changes.
+5. Press **Enter** to close the window when it says it is done.
+6. Reboot Windows.
+
+That’s it.
+
+---
+
+## Optional: configuration
+
+At the top of `OmenGamingHubUnlocker.ps1` you can tweak a small config section:
 
 ```powershell
-# Apply changes immediately by default
-$DryRun             = $false
-
-# If you want to only tame auto-start without blocking network, set this to $false.
-$ManageFirewall     = $true
-
-# Prefix for firewall rule display names
-$FirewallRulePrefix = "Tame-OMEN"
+$DryRun         = $false  # if true, only print actions, do not change anything
+$ManageFirewall = $true   # if true, block OMEN .exe outbound traffic
+$FirewallRulePrefix = "Tame-OMEN"  # prefix for created firewall rules
 ```
 
-* `DryRun`:
+Typical setups:
 
-  * `True`  → script only **prints** what it would do, no changes applied.
-  * `False` → script **applies** all changes immediately (default here).
+* **Full lock‑down (default)**
 
-* `ManageFirewall`:
+  ```powershell
+  $DryRun         = $false
+  $ManageFirewall = $true
+  ```
 
-  * `True`  → also create firewall rules that block OMEN `.exe` network access.
-  * `False` → do **not** touch firewall, only services/tasks/Run.
+  OMEN will not auto‑start and cannot reach the network.
 
-* `FirewallRulePrefix`:
+* **Only stop auto‑start, keep online features**
 
-  * All created rules start with this prefix.
-  * Makes it easy to find and remove them later.
+  ```powershell
+  $DryRun         = $false
+  $ManageFirewall = $false
+  ```
 
----
+  Services, tasks and Run entries are tamed, but firewall is not touched.
 
-## Requirements
+* **Preview what will happen**
 
-* Windows 10 or 11
-* HP OMEN machine with OMEN Gaming Hub installed
-* PowerShell 5+ (built‑in)
-* Admin rights (UAC prompt will appear when the script self‑elevates)
+  ```powershell
+  $DryRun = $true
+  ```
 
----
-
-## How to run (simple, single‑file usage)
-
-1. Download `OmenGamingHubUnlocker.ps1`.
-2. Right‑click the file → **Properties** → if there is an **“Unblock”** checkbox, tick it → OK.
-3. Right‑click `OmenGamingHubUnlocker.ps1` → **Run with PowerShell**.
-4. Approve the UAC prompt.
-5. The script will:
-
-   * ensure it runs as Administrator,
-   * list found services/tasks/Run entries/OMEN executables,
-   * apply changes (if `DryRun = $false`).
-6. At the end it will show a summary and wait for you to press **Enter** before closing.
-7. Reboot Windows.
+  Script prints everything it *would* do, but makes no changes.
 
 ---
 
-## After reboot
+## Manual run (if you don’t want to use the .cmd launcher)
 
-* OMEN should **not start by itself** at login.
-* HP/OMEN helper services should have `Startup type: Manual`.
-* HP/OMEN scheduled tasks should be **Disabled**.
-* Firewall rules like `Tame-OMEN - <exe>.exe` should exist and block outbound traffic for OMEN executables (if `ManageFirewall = $true`).
+1. Right‑click `OmenGamingHubUnlocker.ps1` → **Properties** → if you see an **Unblock** checkbox, tick it → OK.
+2. Right‑click `OmenGamingHubUnlocker.ps1` → **Run with PowerShell**.
+3. Approve the UAC prompt.
+4. Follow the on‑screen output.
 
-Then you can:
-
-1. Boot into Windows.
-2. Enable VPN.
-3. Launch **OMEN Gaming Hub** manually.
-
-Since firewall rules block OMEN’s network access, it should **not be able to detect your real region on boot** and auto‑lock itself before VPN is active.
-
-If you want OMEN online features back, disable firewall blocking (see below).
+If PowerShell says `running scripts is disabled` or `file is not digitally signed`, see the FAQ below.
 
 ---
 
-## Removing firewall rules (unblock OMEN network)
+## After reboot – what should change?
 
-If you later decide to give OMEN network access back, you can delete the firewall rules by prefix.
+* OMEN **no longer auto‑starts** with Windows.
+* HP / OMEN helper services show `Startup type: Manual` in Services.
+* HP / OMEN scheduled tasks are **Disabled** in Task Scheduler.
+* If firewall management is enabled, you see rules like:
 
-From an elevated PowerShell:
+  ```text
+  Tame-OMEN - SomeOmenExecutable.exe
+  ```
+
+  in Windows Defender Firewall, and OMEN cannot talk to the network.
+
+You can still open OMEN Gaming Hub manually after your VPN is connected.
+
+---
+
+## FAQ
+
+### Is this safe? What does it NOT do?
+
+The script:
+
+* does **not** uninstall OMEN Gaming Hub,
+* does **not** remove drivers or core Windows components,
+* only changes:
+
+  * startup type of specific HP/OMEN services,
+  * some HP/OMEN scheduled tasks,
+  * HP/OMEN entries in common Run keys,
+  * optional outbound firewall rules for OMEN executables.
+
+You can re‑run the script again later – it is idempotent for the typical setup.
+
+---
+
+### I get “running scripts is disabled” or “file is not digitally signed”
+
+If you use the **`.cmd` launcher**, you should not see this.
+
+If you run the `.ps1` directly and get this error:
+
+1. Open **PowerShell as Administrator**.
+2. Run:
+
+   ```powershell
+   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+   ```
+
+   Answer `Y`.
+3. Optionally unblock the file once:
+
+   ```powershell
+   Unblock-File .\OmenGamingHubUnlocker.ps1
+   ```
+4. Run the script again.
+
+---
+
+### OMEN still flashes for a second on the taskbar – is that normal?
+
+Yes. UWP apps sometimes briefly start or check updates on login.
+
+With this script applied:
+
+* services/tasks are tamed,
+* Run entries are removed,
+* and (optionally) firewall blocks OMEN traffic.
+
+So a small visual flicker does not mean it still phones home or resets itself.
+
+---
+
+### How do I remove the firewall rules and give OMEN internet back?
+
+Open **PowerShell as Administrator** and run:
 
 ```powershell
 $prefix = "Tame-OMEN"
@@ -166,96 +213,33 @@ if ($rules) {
 }
 ```
 
-After this, OMEN executables are no longer blocked by these rules.
+After that OMEN executables are no longer blocked by these rules.
 
 ---
 
-## Encoding note (to avoid parsing issues)
+### Can I break my system with this?
 
-If you edit the script:
+Very unlikely, but always a good idea to:
 
-* Save it as **ANSI** or **UTF‑8 with BOM**.
-* Avoid mixing non‑ASCII characters in comments with "UTF‑8 without BOM" in old editors.
+* create a restore point before running any tweak script,
+* keep a backup of important data,
+* read the script if you are curious what it does.
 
-If you see weird characters or `ParserError: TerminatorExpectedAtEndOfString`, it is almost always an encoding problem.
+Worst case, you can:
 
----
-
-## FAQ
-
-### The script says “running scripts is disabled” or “file is not digitally signed”
-
-Run PowerShell as Administrator and:
-
-```powershell
-Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
-
-Answer `Y`.
-If Windows still complains that the file is from the internet:
-
-```powershell
-Unblock-File .\OmenGamingHubUnlocker.ps1
-```
-
-Then run it again.
+* set startup types back to their old values,
+* re‑enable tasks,
+* delete the `Tame-OMEN` firewall rules.
 
 ---
 
-### OMEN still briefly flickers on the taskbar
+## Contributing & support
 
-This may happen due to UWP startup behavior, but with:
+If this script helped you:
 
-* HP/OMEN services set to `Manual`,
-* HP/OMEN tasks disabled,
-* firewall rules blocking all OMEN `.exe` outbound traffic,
+* ⭐ **Star the repo** to support the project.
+* 🍴 **Fork it** and tweak it for your own setup.
+* 🐛 **Open an issue** if something breaks or OMEN changes its behavior.
+* 🔧 **Send a PR** if you improve detection of services/tasks or add a safer rollback.
 
-it should no longer be able to:
-
-* auto-start fully,
-* detect your real region before VPN,
-* or reset itself based on that.
-
-The flicker becomes a purely visual side effect, not a functional one.
-
----
-
-### I only want to stop auto-start, but keep network for OMEN
-
-Set:
-
-```powershell
-$ManageFirewall = $false
-```
-
-Now the script will:
-
-* tame services,
-* disable tasks,
-* clean Run auto-start,
-
-but will **not** add any firewall rules.
-
----
-
-### I want a dry-run first
-
-Set:
-
-```powershell
-$DryRun = $true
-```
-
-Run the script.
-It will:
-
-* print all target services, tasks, Run-entries and `.exe` files,
-* but will **not** change anything.
-
-If the output looks safe, set `DryRun = $false` and run again.
-
----
-
-## License
-
-MIT License
+Thanks for using Omen Gaming Hub Unlocker 🙌
