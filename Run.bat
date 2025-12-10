@@ -1,6 +1,13 @@
 @echo off
-REM Launcher for OmenGamingHubUnlocker.ps1
-REM Runs PowerShell with ExecutionPolicy Bypass for this process only.
+setlocal
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0OmenGamingHubUnlocker.ps1"
-exit /b
+set SCRIPT_DIR=%~dp0
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%OmenGamingHubUnlocker.ps1"
+
+echo.
+echo Omen Gaming Hub Unlocker finished.
+echo Press any key to close this window...
+pause >nul
+
+endlocal
