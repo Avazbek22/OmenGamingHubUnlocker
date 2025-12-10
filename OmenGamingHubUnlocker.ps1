@@ -1,350 +1,561 @@
-<# 
-    OmenGamingHubUnlocker.ps1
+param()
 
-    Goal:
-      Keep HP OMEN Gaming Hub installed, but:
-        - prevent it from auto-starting with Windows
-        - stop HP/OMEN helper services and tasks from auto-starting
-        - remove HP/OMEN auto-start entries from Run registry keys
-        - optionally block ALL network access for every OMEN .exe via Windows Firewall
+# ============================================================
+#  CONFIGURATION
+# ============================================================
 
-    How it works:
-      1. Auto-unblocks itself if marked as "downloaded from the Internet".
-      2. Ensures the script is running as Administrator (self-elevates if needed).
-      3. Finds HP/OMEN-related services and sets StartupType to Manual.
-      4. Finds HP/OMEN-related scheduled tasks and disables them.
-      5. Scans common Run registry keys and removes HP/OMEN auto-start entries.
-      6. Locates the OMEN UWP package (AD2F1837.OMENCommandCenter),
-         finds all .exe files inside its InstallLocation
-         and creates outbound-blocking firewall rules for them (if enabled).
-
-    Typical usage:
-      - Run Run-OmenGamingHubUnlocker.cmd (recommended for end users), OR
-      - Right-click this .ps1 -> "Run with PowerShell".
-      - The script will auto-elevate (UAC prompt) and apply changes.
-
-    Notes:
-      - The script does NOT uninstall OMEN Gaming Hub.
-      - The script does NOT touch drivers or Windows system services.
-      - Services are set to Manual, so OMEN can still start them when you
-        launch OMEN Gaming Hub manually.
-      - Firewall rules are prefixed with a custom name and can be removed later.
-#>
-
-# ========================= CONFIGURATION SECTION ============================
-
-# If $true, show what would be changed but do NOT modify anything.
-# If $false, apply all changes immediately.
+# If $true – only print actions, do not change anything
 $DryRun             = $false
 
-# If $true, create outbound-blocking firewall rules for OMEN executables.
-# If $false, skip firewall management.
+# If $true – manage Windows Firewall rules for OMEN executables
 $ManageFirewall     = $true
 
-# Prefix for firewall rule display names. Used so rules are easy to find/remove.
+# Prefix for firewall rule DisplayName, for easy clean-up
 $FirewallRulePrefix = "Tame-OMEN"
 
-# ========================= AUTO-UNBLOCK SELF ================================
+# If $true – add entries to hosts file to block known OMEN / HP endpoints
+$ManageHosts        = $true
 
-# If the file is marked as "downloaded from the Internet", silently unblock it.
-try {
-    Unblock-File -Path $PSCommandPath -ErrorAction SilentlyContinue
+# Domains that will be mapped to 127.0.0.1 in hosts when $ManageHosts is $true
+$HostsDomainsToBlock = @(
+    "hpbp.io",
+    "api.hpbp.io",
+    "hpgamestream.com",
+    "content.hpgamestream.com"
+)
+
+# ============================================================
+#  ELEVATE TO ADMIN IF NEEDED
+# ============================================================
+
+$currIdentity  = [Security.Principal.WindowsIdentity]::GetCurrent()
+$currPrincipal = New-Object Security.Principal.WindowsPrincipal($currIdentity)
+$isAdmin       = $currPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $isAdmin) {
+    Write-Host ""
+    Write-Host "Restarting script as Administrator..." -ForegroundColor Yellow
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName  = "powershell.exe"
+    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    $psi.Verb      = "runas"
+
+    try {
+        [System.Diagnostics.Process]::Start($psi) | Out-Null
+    } catch {
+        Write-Host "Failed to restart script as Administrator: $($_.Exception.Message)" -ForegroundColor Red
+    }
+
+    exit
 }
-catch {
-    # Not critical if this fails.
+
+# ============================================================
+#  OUTPUT HELPERS
+# ============================================================
+
+function Write-Section {
+    param([string]$Text)
+    Write-Host ""
+    Write-Host "=== $Text ===" -ForegroundColor Cyan
 }
 
-# ========================= ADMIN ELEVATION CHECK ============================
+function Write-Info {
+    param([string]$Text)
+    Write-Host "    $Text"
+}
 
-function Ensure-Admin {
-    $currentIdentity  = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $currentPrincipal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
-    $isAdmin = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+function Write-Success {
+    param([string]$Text)
+    Write-Host "[OK]   $Text" -ForegroundColor Green
+}
 
-    if (-not $isAdmin) {
-        Write-Host "Current PowerShell session is not elevated. Restarting as Administrator..." -ForegroundColor Yellow
+function Write-WarningMessage {
+    param([string]$Text)
+    Write-Host "[WARN] $Text" -ForegroundColor Yellow
+}
 
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName  = "powershell.exe"
-        # Important: use ExecutionPolicy Bypass so the script is not blocked in the elevated session.
-        $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
-        $psi.Verb      = "runas"   # triggers UAC prompt
+function Write-ErrorMessage {
+    param([string]$Text)
+    Write-Host "[ERR]  $Text" -ForegroundColor Red
+}
+
+$Summary = [System.Collections.Generic.List[string]]::new()
+
+# ============================================================
+#  SERVICES: SET TO MANUAL
+# ============================================================
+
+function Set-OmenServicesToManual {
+
+    Write-Section "Services: set HP / OMEN services to Manual"
+
+    $servicePatterns = @(
+        "*OMEN*",
+        "*Omen*",
+        "*HP Gaming*",
+        "*HPGame*",
+        "*HP OMEN*"
+    )
+
+    try {
+        $services = Get-Service | Where-Object {
+            $svc = $_
+            $matched = $false
+            foreach ($pattern in $servicePatterns) {
+                if ($svc.Name -like $pattern -or $svc.DisplayName -like $pattern) {
+                    $matched = $true
+                    break
+                }
+            }
+            return $matched
+        }
+    } catch {
+        Write-WarningMessage "Could not query services: $($_.Exception.Message)"
+        return
+    }
+
+    if (-not $services) {
+        Write-Info "No matching HP / OMEN services found."
+        return
+    }
+
+    foreach ($svc in $services | Sort-Object Name -Unique) {
+        $name        = $svc.Name
+        $displayName = $svc.DisplayName
+        $info        = "$name ($displayName)"
+
+        if ($svc.StartType -eq "Manual") {
+            Write-Info "Service already Manual: $info"
+            continue
+        }
+
+        Write-Info "Setting service to Manual: $info"
+
+        if (-not $DryRun) {
+            try {
+                Set-Service -Name $name -StartupType Manual -ErrorAction Stop
+                $Summary.Add("Service set to Manual: $info") | Out-Null
+                Write-Success "Service set to Manual: $info"
+            } catch {
+                Write-WarningMessage "Failed to change service $info. Error: $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
+# ============================================================
+#  SCHEDULED TASKS: DISABLE
+# ============================================================
+
+function Disable-OmenScheduledTasks {
+
+    Write-Section "Scheduled tasks: disable HP / OMEN tasks"
+
+    $taskPatterns = @(
+        "*Omen*",
+        "*OMEN*",
+        "*HP.OMEN*",
+        "*OMEN Gaming*",
+        "*HP Support Assistant*"
+    )
+
+    try {
+        $tasks = Get-ScheduledTask | Where-Object {
+            $t = $_
+            $matched = $false
+            foreach ($pattern in $taskPatterns) {
+                if ($t.TaskName -like $pattern -or $t.TaskPath -like $pattern) {
+                    $matched = $true
+                    break
+                }
+            }
+            return $matched
+        }
+    } catch {
+        Write-WarningMessage "Could not query scheduled tasks: $($_.Exception.Message)"
+        return
+    }
+
+    if (-not $tasks) {
+        Write-Info "No matching HP / OMEN scheduled tasks found."
+        return
+    }
+
+    foreach ($task in $tasks | Sort-Object TaskPath, TaskName -Unique) {
+        $fullName = "$($task.TaskPath)$($task.TaskName)"
+
+        Write-Info "Disabling task: $fullName"
+
+        if (-not $DryRun) {
+            try {
+                Disable-ScheduledTask -TaskName $task.TaskName -TaskPath $task.TaskPath -ErrorAction Stop | Out-Null
+                $Summary.Add("Scheduled task disabled: $fullName") | Out-Null
+                Write-Success "Scheduled task disabled: $fullName"
+            } catch {
+                Write-WarningMessage "Failed to disable task $fullName. Error: $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
+# ============================================================
+#  REGISTRY RUN ENTRIES: REMOVE HP / OMEN AUTOSTART
+# ============================================================
+
+function Clean-OmenRunEntries {
+
+    Write-Section "Registry: remove HP / OMEN Run auto-start entries"
+
+    $runKeys = @(
+        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run",
+        "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run"
+    )
+
+    $namePatterns = @(
+        "*OMEN*",
+        "*Omen*",
+        "*HPGaming*",
+        "*HP Gaming*",
+        "*OMENCommandCenter*",
+        "*OCC*",
+        "*HP Support Assistant*"
+    )
+
+    foreach ($keyPath in $runKeys) {
+        $key = Get-Item $keyPath -ErrorAction SilentlyContinue
+        if (-not $key) {
+            continue
+        }
+
+        $valueNames = $key.GetValueNames()
+        if (-not $valueNames) {
+            continue
+        }
+
+        foreach ($valueName in $valueNames) {
+            $valueData = $key.GetValue($valueName)
+
+            $match = $false
+            foreach ($pattern in $namePatterns) {
+                if ($valueName -like $pattern) {
+                    $match = $true
+                    break
+                }
+
+                if ($valueData -is [string] -and $valueData -like $pattern) {
+                    $match = $true
+                    break
+                }
+            }
+
+            if ($match) {
+                Write-Info "Removing Run entry '$valueName' from $keyPath"
+
+                if (-not $DryRun) {
+                    try {
+                        Remove-ItemProperty -Path $keyPath -Name $valueName -ErrorAction Stop
+                        $Summary.Add("Removed Run entry: $keyPath -> $valueName") | Out-Null
+                        Write-Success "Removed Run entry: $keyPath -> $valueName"
+                    } catch {
+                        Write-WarningMessage "Failed to remove Run entry '$valueName' from '$keyPath'. Error: $($_.Exception.Message)"
+                    }
+                }
+            }
+        }
+    }
+}
+
+# ============================================================
+#  EXECUTABLE DISCOVERY: FIND ALL OMEN-RELATED .EXE FILES
+# ============================================================
+
+function Get-OmenExecutables {
+
+    Write-Section "Discovery: find OMEN executables for firewall rules"
+
+    $executables = New-Object System.Collections.Generic.HashSet[string]
+
+    # 1) UWP packages: OMEN Gaming Hub, OMEN Command Center, etc.
+    $appxFilters = @(
+        "*OMENCommandCenter*",
+        "*OMENGamingHub*",
+        "*OMEN*Gaming*Hub*",
+        "*HPInc.OMEN*",
+        "*HPInc.HPOmenGamingHub*",
+        "*HPOMEN*"
+    )
+
+    try {
+        $appxPackages = Get-AppxPackage | Where-Object {
+            $pkg = $_
+            $matched = $false
+            foreach ($pattern in $appxFilters) {
+                if ($pkg.Name -like $pattern -or $pkg.PackageFamilyName -like $pattern) {
+                    $matched = $true
+                    break
+                }
+            }
+            return $matched
+        }
+    } catch {
+        Write-WarningMessage "Could not query AppX packages. Error: $($_.Exception.Message)"
+        $appxPackages = @()
+    }
+
+    foreach ($pkg in $appxPackages) {
+        if (-not $pkg.InstallLocation -or -not (Test-Path $pkg.InstallLocation)) {
+            continue
+        }
+
+        Write-Info "Scanning AppX package: $($pkg.Name) at $($pkg.InstallLocation)"
 
         try {
-            [System.Diagnostics.Process]::Start($psi) | Out-Null
-        }
-        catch {
-            Write-Host "Failed to restart script as Administrator. Please run it manually as admin." -ForegroundColor Red
-        }
-
-        # Exit current (non-admin) instance
-        exit
-    }
-}
-
-Ensure-Admin
-
-# ========================= SCRIPT START =====================================
-
-Write-Host "=== HP OMEN auto-start tamer ===" -ForegroundColor Cyan
-Write-Host ("DryRun = {0}" -f $DryRun) -ForegroundColor Yellow
-Write-Host ("ManageFirewall = {0}" -f $ManageFirewall) -ForegroundColor Yellow
-
-# ========================= 1. HP / OMEN SERVICES ============================
-
-# Collect known HP/OMEN helper services by ServiceName and DisplayName,
-# print them, and set their StartupType to Manual (if DryRun = $false).
-
-$serviceNames = @(
-    "HPAppHelperCap",
-    "HPDiagsCap",
-    "HPNetworkCap",
-    "HPSysInfoCap",
-    "HP Comm Recover",
-    "HpTouchpointAnalyticsService",
-    "HP TechPulse Core"
-)
-
-$serviceDisplayPatterns = @(
-    "*OMEN*HSA*",
-    "HP App Helper HSA Service",
-    "HP Diagnostics HSA Service",
-    "HP Network HSA Service",
-    "HP System Info HSA Service",
-    "HP Analytics Service"
-)
-
-$services = @()
-
-# Find by exact service names
-foreach ($name in $serviceNames) {
-    $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
-    if ($null -ne $svc) {
-        $services += $svc
-    }
-}
-
-# Find by display name patterns
-$allServices = Get-Service -ErrorAction SilentlyContinue
-foreach ($svc in $allServices) {
-    foreach ($pattern in $serviceDisplayPatterns) {
-        if ($svc.DisplayName -like $pattern) {
-            $services += $svc
-            break
+            $exes = Get-ChildItem -Path $pkg.InstallLocation -Recurse -Include *.exe -File -ErrorAction SilentlyContinue
+            foreach ($exe in $exes) {
+                [void]$executables.Add($exe.FullName)
+            }
+        } catch {
+            Write-WarningMessage "Failed to scan '$($pkg.InstallLocation)'. Error: $($_.Exception.Message)"
         }
     }
-}
 
-# Remove duplicates and sort for stable output
-$services = $services | Sort-Object Name -Unique
+    # 2) Classic Program Files locations (fallback / additional)
+    $programDirs = @()
 
-if ($services.Count -eq 0) {
-    Write-Host "No HP/OMEN services found." -ForegroundColor DarkGray
-}
-else {
-    Write-Host "`n--- HP/OMEN services found ---" -ForegroundColor Green
-    foreach ($svc in $services) {
-        Write-Host ("{0,-30}  ({1})" -f $svc.Name, $svc.DisplayName)
+    if ($env:ProgramFiles) {
+        $programDirs += (Join-Path $env:ProgramFiles "HP\OMEN Gaming Hub")
+        $programDirs += (Join-Path $env:ProgramFiles "HP Inc\OMEN Gaming Hub")
+        $programDirs += (Join-Path $env:ProgramFiles "HP\OMENCommandCenter")
     }
 
-    if (-not $DryRun) {
-        Write-Host "`nSetting StartupType to Manual..." -ForegroundColor Yellow
-        foreach ($svc in $services) {
+    if ($env:ProgramFiles -and $env:ProgramFiles -ne $env:ProgramFilesx86) {
+        $programDirs += (Join-Path ${env:ProgramFiles(x86)} "HP\OMEN Gaming Hub")
+        $programDirs += (Join-Path ${env:ProgramFiles(x86)} "HP Inc\OMEN Gaming Hub")
+        $programDirs += (Join-Path ${env:ProgramFiles(x86)} "HP\OMENCommandCenter")
+    }
+
+    foreach ($dir in $programDirs | Sort-Object -Unique) {
+        if (-not (Test-Path $dir)) {
+            continue
+        }
+
+        Write-Info "Scanning Program Files directory: $dir"
+
+        try {
+            $exes = Get-ChildItem -Path $dir -Recurse -Include *.exe -File -ErrorAction SilentlyContinue
+            foreach ($exe in $exes) {
+                [void]$executables.Add($exe.FullName)
+            }
+        } catch {
+            Write-WarningMessage "Failed to scan '$dir'. Error: $($_.Exception.Message)"
+        }
+    }
+
+    if ($executables.Count -eq 0) {
+        Write-WarningMessage "No OMEN executables were found. Firewall rules will not be created."
+    } else {
+        Write-Success "Found $($executables.Count) executable(s) to use in firewall rules."
+    }
+
+    return $executables
+}
+
+# ============================================================
+#  FIREWALL: REMOVE OLD RULES AND CREATE NEW ONES
+# ============================================================
+
+function Update-OmenFirewallRules {
+
+    if (-not $ManageFirewall) {
+        Write-Section "Firewall: skipped (ManageFirewall = false)"
+        return
+    }
+
+    Write-Section "Firewall: refresh rules for OMEN executables"
+
+    # 1) Remove existing rules with our prefix in DisplayName
+    $displayNamePattern = "$FirewallRulePrefix - *"
+
+    try {
+        $existingRules = Get-NetFirewallRule -DisplayName $displayNamePattern -ErrorAction SilentlyContinue
+    } catch {
+        Write-WarningMessage "Could not query existing firewall rules. Error: $($_.Exception.Message)"
+        $existingRules = @()
+    }
+
+    if ($existingRules) {
+        Write-Info "Removing existing firewall rules with prefix '$FirewallRulePrefix - '"
+
+        foreach ($rule in $existingRules) {
+            Write-Info "Removing rule: $($rule.DisplayName)"
+
+            if (-not $DryRun) {
+                try {
+                    Remove-NetFirewallRule -Name $rule.Name -ErrorAction Stop
+                    $Summary.Add("Removed firewall rule: $($rule.DisplayName)") | Out-Null
+                    Write-Success "Removed firewall rule: $($rule.DisplayName)"
+                } catch {
+                    Write-WarningMessage "Failed to remove firewall rule '$($rule.DisplayName)'. Error: $($_.Exception.Message)"
+                }
+            }
+        }
+    } else {
+        Write-Info "No existing firewall rules with prefix '$FirewallRulePrefix - ' were found."
+    }
+
+    # 2) Discover current executables and create new rules
+    $executables = Get-OmenExecutables
+
+    if ($executables.Count -eq 0) {
+        return
+    }
+
+    foreach ($exePath in $executables | Sort-Object) {
+        $fileName    = [System.IO.Path]::GetFileName($exePath)
+        $displayName = "$FirewallRulePrefix - $fileName"
+
+        Write-Info "Creating outbound block rule for: $fileName ($exePath)"
+
+        if (-not $DryRun) {
             try {
-                # Only change StartupType; do not forcibly stop running services here.
-                Set-Service -Name $svc.Name -StartupType Manual
-                Write-Host ("OK: {0} -> Manual" -f $svc.Name)
-            }
-            catch {
-                Write-Host ("SKIP: failed to modify {0}: {1}" -f $svc.Name, $_) -ForegroundColor Red
-            }
-        }
-    }
-}
+                New-NetFirewallRule `
+                    -DisplayName $displayName `
+                    -Direction Outbound `
+                    -Program $exePath `
+                    -Action Block `
+                    -Profile Any `
+                    -Enabled True `
+                    -ErrorAction Stop | Out-Null
 
-# ========================= 2. SCHEDULED TASKS ===============================
-
-# Find scheduled tasks whose names/paths indicate HP/OMEN/HSA,
-# print them, and disable them (if DryRun = $false).
-
-Write-Host "`nScanning HP/OMEN scheduled tasks..." -ForegroundColor Cyan
-
-$taskPatterns = @(
-    "*Omen*",
-    "*OMEN*",
-    "*HP Support Assistant*",
-    "*HP JumpStart*",
-    "*HP Wolf*",
-    "*HP Analytics*",
-    "*HP HSA*"
-)
-
-$tasks = Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
-    $t = $_
-    foreach ($p in $taskPatterns) {
-        if ($t.TaskName -like $p -or $t.TaskPath -like $p) { return $true }
-    }
-    return $false
-}
-
-if ($tasks.Count -eq 0) {
-    Write-Host "No HP/OMEN scheduled tasks found." -ForegroundColor DarkGray
-}
-else {
-    Write-Host "`n--- HP/OMEN scheduled tasks found ---" -ForegroundColor Green
-    foreach ($t in $tasks) {
-        Write-Host ("{0}{1}" -f $t.TaskPath, $t.TaskName)
-    }
-
-    if (-not $DryRun) {
-        Write-Host "`nDisabling tasks..." -ForegroundColor Yellow
-        foreach ($t in $tasks) {
-            try {
-                Disable-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath -ErrorAction SilentlyContinue | Out-Null
-                Write-Host ("OK: {0}{1}" -f $t.TaskPath, $t.TaskName)
-            }
-            catch {
-                Write-Host ("SKIP: failed to disable {0}{1}: {2}" -f $t.TaskPath, $t.TaskName, $_) -ForegroundColor Red
+                $Summary.Add("Firewall: blocked outbound traffic for $fileName") | Out-Null
+                Write-Success "Created firewall rule: $displayName"
+            } catch {
+                Write-WarningMessage "Failed to create firewall rule for '$exePath'. Error: $($_.Exception.Message)"
             }
         }
     }
 }
 
-# ========================= 3. RUN REGISTRY AUTO-START =======================
+# ============================================================
+#  HOSTS: OPTIONAL DOMAIN BLOCKING
+# ============================================================
 
-# Inspect common Run keys (HKLM / HKCU, 32/64-bit),
-# print HP/OMEN-related values and remove them (if DryRun = $false).
+function Update-HostsFile {
 
-Write-Host "`nScanning Run registry keys for auto-start entries..." -ForegroundColor Cyan
-
-$runKeys = @(
-    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
-    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run",
-    "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
-)
-
-$runValuePatterns = @(
-    "*Omen*",
-    "*OMEN*",
-    "*HP Command Center*",
-    "*HPSystemEventUtility*",
-    "*HP Support Assistant*"
-)
-
-foreach ($key in $runKeys) {
-    if (-not (Test-Path $key)) {
-        Write-Host ("Registry key '{0}' does not exist." -f $key) -ForegroundColor DarkGray
-        continue
+    if (-not $ManageHosts) {
+        Write-Section "hosts: skipped (ManageHosts = false)"
+        return
     }
 
-    $props = Get-ItemProperty -Path $key
-    foreach ($property in $props.PSObject.Properties) {
-        # Skip technical PowerShell properties
-        if ($property.Name -like "PS*") { continue }
+    Write-Section "hosts: block known OMEN / HP endpoints"
 
-        $value = [string]$property.Value
-        $match = $false
-        foreach ($pattern in $runValuePatterns) {
-            if ($value -like $pattern -or $property.Name -like $pattern) {
-                $match = $true
+    $hostsPath = Join-Path $env:SystemRoot "System32\drivers\etc\hosts"
+
+    if (-not (Test-Path $hostsPath)) {
+        Write-WarningMessage "hosts file was not found at '$hostsPath'."
+        return
+    }
+
+    try {
+        $hostsContent = Get-Content -Path $hostsPath -ErrorAction Stop
+    } catch {
+        Write-WarningMessage "Could not read hosts file. Error: $($_.Exception.Message)"
+        return
+    }
+
+    foreach ($domain in $HostsDomainsToBlock) {
+        $escapedDomain = [Regex]::Escape($domain)
+        $regex         = "^\s*\d{1,3}(\.\d{1,3}){3}\s+$escapedDomain(\s|$)"
+
+        $alreadyPresent = $false
+        foreach ($line in $hostsContent) {
+            if ($line -match $regex) {
+                $alreadyPresent = $true
                 break
             }
         }
 
-        if ($match) {
-            Write-Host ("Found auto-start entry: {0} -> {1} in {2}" -f $property.Name, $value, $key) -ForegroundColor Green
-            if (-not $DryRun) {
-                try {
-                    Remove-ItemProperty -Path $key -Name $property.Name -ErrorAction SilentlyContinue
-                    Write-Host ("Removed: {0}" -f $property.Name) -ForegroundColor Yellow
+        if ($alreadyPresent) {
+            Write-Info "Domain already present in hosts: $domain"
+            continue
+        }
+
+        $newLine = "127.0.0.1`t$domain`t# OmenGamingHubUnlocker"
+
+        Write-Info "Adding hosts entry: $newLine"
+
+        if ($DryRun) {
+            continue
+        }
+
+        $maxRetries = 3
+        $delayMs    = 300
+
+        $added = $false
+
+        for ($attempt = 1; $attempt -le $maxRetries -and -not $added; $attempt++) {
+            try {
+                Add-Content -Path $hostsPath -Value $newLine -ErrorAction Stop
+                $added = $true
+            } catch [System.IO.IOException] {
+                if ($attempt -lt $maxRetries) {
+                    Write-WarningMessage "hosts file is locked by another process (attempt $attempt of $maxRetries). Retrying..."
+                    Start-Sleep -Milliseconds $delayMs
+                } else {
+                    Write-WarningMessage "hosts file is locked by another process. Giving up on domain '$domain'."
                 }
-                catch {
-                    Write-Host ("SKIP: failed to remove {0}: {1}" -f $property.Name, $_) -ForegroundColor Red
-                }
+            } catch {
+                Write-WarningMessage "Failed to add hosts entry for '$domain'. Error: $($_.Exception.Message)"
+                break
             }
+        }
+
+        if ($added) {
+            $Summary.Add("hosts: $domain mapped to 127.0.0.1") | Out-Null
+            Write-Success "Added hosts entry for domain: $domain"
+            # keep in-memory copy in sync for next iterations
+            $hostsContent += $newLine
+        } else {
+            $Summary.Add("hosts: FAILED to map $domain to 127.0.0.1") | Out-Null
         }
     }
 }
 
-# ========================= 4. FIREWALL BLOCK FOR OMEN EXEs ==================
+# ============================================================
+#  MAIN FLOW
+# ============================================================
 
-# If ManageFirewall = $true:
-#   - locate the OMEN UWP package (AD2F1837.OMENCommandCenter),
-#   - find every .exe inside its InstallLocation,
-#   - print them,
-#   - create outbound-blocking firewall rules for each .exe (if DryRun = $false).
+Write-Section "Omen Gaming Hub Unlocker"
+Write-Info "DryRun             = $DryRun"
+Write-Info "ManageFirewall     = $ManageFirewall"
+Write-Info "FirewallRulePrefix = $FirewallRulePrefix"
+Write-Info "ManageHosts        = $ManageHosts"
+Write-Host ""
 
-if ($ManageFirewall) {
-    Write-Host "`nScanning OMEN Gaming Hub package for executables..." -ForegroundColor Cyan
+Set-OmenServicesToManual
+Disable-OmenScheduledTasks
+Clean-OmenRunEntries
+Update-OmenFirewallRules
+Update-HostsFile
 
-    $omenPkg = Get-AppxPackage AD2F1837.OMENCommandCenter -ErrorAction SilentlyContinue
-    if ($null -eq $omenPkg) {
-        Write-Host "OMENCommandCenter package not found. Skipping firewall rules." -ForegroundColor DarkGray
-    }
-    else {
-        $installPath = $omenPkg.InstallLocation
-        Write-Host ("OMENCommandCenter InstallLocation: {0}" -f $installPath) -ForegroundColor Green
+# ============================================================
+#  SUMMARY
+# ============================================================
 
-        if (-not (Test-Path $installPath)) {
-            Write-Host "InstallLocation path does not exist. Skipping firewall rules." -ForegroundColor Red
-        }
-        else {
-            $exeFiles = Get-ChildItem -Path $installPath -Filter *.exe -Recurse -ErrorAction SilentlyContinue
+Write-Section "Summary"
 
-            if (-not $exeFiles -or $exeFiles.Count -eq 0) {
-                Write-Host "No .exe files found inside OMENCommandCenter package. Skipping firewall rules." -ForegroundColor DarkGray
-            }
-            else {
-                Write-Host "`n--- OMEN .exe files found ---" -ForegroundColor Green
-                foreach ($exe in $exeFiles) {
-                    Write-Host $exe.FullName
-                }
-
-                if (-not $DryRun) {
-                    Write-Host "`nCreating outbound-blocking firewall rules for OMEN executables..." -ForegroundColor Yellow
-
-                    foreach ($exe in $exeFiles) {
-                        $ruleName = "$FirewallRulePrefix - $($exe.Name)"
-                        try {
-                            $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
-                            if ($null -ne $existing) {
-                                Write-Host ("Firewall rule already exists: {0}" -f $ruleName) -ForegroundColor DarkGray
-                                continue
-                            }
-
-                            New-NetFirewallRule `
-                                -DisplayName $ruleName `
-                                -Direction Outbound `
-                                -Program $exe.FullName `
-                                -Action Block `
-                                -Profile Any `
-                                -EdgeTraversalPolicy Block | Out-Null
-
-                            Write-Host ("Firewall rule created: {0}" -f $ruleName) -ForegroundColor Green
-                        }
-                        catch {
-                            Write-Host ("SKIP: failed to create firewall rule for {0}: {1}" -f $exe.FullName, $_) -ForegroundColor Red
-                        }
-                    }
-                }
-                else {
-                    Write-Host "`nDryRun is True: firewall rules were NOT created. Set `$DryRun = `$false to apply them." -ForegroundColor Yellow
-                }
-            }
-        }
-    }
-}
-else {
-    Write-Host "`nFirewall management disabled (ManageFirewall = `$false)." -ForegroundColor DarkGray
-}
-
-# ========================= SUMMARY ==========================================
-
-Write-Host "`n=== Done. Reboot and check whether OMEN Gaming Hub still auto-starts and whether your issue is resolved. ===" -ForegroundColor Cyan
 if ($DryRun) {
-    Write-Host "DryRun is True: no changes were applied. If the output looks correct, set `$DryRun = `$false and run the script again." -ForegroundColor Yellow
+    Write-WarningMessage "DryRun is enabled. No changes were actually applied."
+}
+
+if ($Summary.Count -eq 0) {
+    Write-WarningMessage "No changes were recorded. Either nothing matched, or everything was already configured."
+} else {
+    foreach ($item in $Summary) {
+        Write-Success $item
+    }
 }
 
 Write-Host ""
-Write-Host "Press Enter to close this window..." -ForegroundColor Yellow
-[void](Read-Host)
+[void] (Read-Host "Press Enter to exit...")
