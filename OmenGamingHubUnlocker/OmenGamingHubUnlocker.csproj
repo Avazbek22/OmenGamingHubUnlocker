@@ -1,0 +1,28 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+
+        <!-- Windows 10/11 minimum -->
+        <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+
+        <!-- IMPORTANT: keep SupportedOSPlatformVersion <= TargetPlatformVersion -->
+        <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+
+        <ApplicationManifest>app.manifest</ApplicationManifest>
+
+        <DebugType>portable</DebugType>
+    </PropertyGroup>
+
+
+
+    <ItemGroup>
+        <!-- WMI (services) -->
+        <PackageReference Include="System.Management" Version="8.0.0" />
+    </ItemGroup>
+
+
+</Project>
