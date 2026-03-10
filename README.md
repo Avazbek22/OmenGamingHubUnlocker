@@ -1,5 +1,11 @@
 # Omen Gaming Hub Unlocker
 
+![Downloads](https://img.shields.io/github/downloads/Avazbek22/OmenGamingHubUnlocker/total)
+![License](https://img.shields.io/github/license/Avazbek22/OmenGamingHubUnlocker)
+![.NET](https://img.shields.io/badge/.NET-10-purple)
+![Platform](https://img.shields.io/badge/platform-Windows-green)
+![Repo size](https://img.shields.io/github/repo-size/Avazbek22/OmenGamingHubUnlocker)
+
 Small helper tool for **HP OMEN** laptops and desktops.
 
 It keeps **OMEN Gaming Hub** installed, but helps you prevent unwanted background behavior and “region-check” style network calls **before you are ready** (for example, before you connect a VPN).
