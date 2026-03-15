@@ -17,4 +17,7 @@ public sealed class UnlockerOptions
 
     public static UnlockerOptions ForDisable()
         => new UnlockerOptions { DryRun = false, ManageFirewall = true, ManageHosts = true, TryKillProcesses = false };
+
+    public static UnlockerOptions ForResetAndReapply()
+        => new UnlockerOptions { DryRun = false, ManageFirewall = true, ManageHosts = true, TryKillProcesses = true };
 }

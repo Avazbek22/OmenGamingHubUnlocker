@@ -1,73 +1,65 @@
-﻿using OmenGamingHubUnlocker.Windows;
+using OmenGamingHubUnlocker.Windows;
 
 namespace OmenGamingHubUnlocker.Core;
 
 public sealed class UnlockerEngine
 {
+    private readonly UnlockerStateStore _stateStore = new();
+
     public StatusReport GetStatusReport()
     {
         var report = new StatusReport();
 
-        // Processes
-        foreach (var p in ProcessManager.FindMatchingProcesses(OmenTargets.ProcessNamePatterns))
-            report.RunningProcesses.Add($"{p.ProcessName} (PID {p.Id})");
+        foreach (var process in ProcessManager.FindMatchingProcesses(OmenTargets.ProcessNamePatterns))
+            report.RunningProcesses.Add($"{process.ProcessName} (PID {process.Id})");
 
-        // Services
         var services = ServiceManager.QueryServices(OmenTargets.ServicePatterns);
         report.ServicesMatched = services.Count;
 
-        foreach (var s in services.OrderBy(x => x.Name))
+        foreach (var service in services.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase))
         {
-            var expected = "Manual (tamed)";
-            var current = s.StartMode;
-
-            var ok = current.Equals("Manual", StringComparison.OrdinalIgnoreCase);
+            var ok = service.StartMode.Equals("Manual", StringComparison.OrdinalIgnoreCase);
             report.Snapshots.Add(new StatusSnapshot
             {
                 Area = "Services",
-                Item = $"{s.Name}",
-                Current = current,
-                Expected = expected,
+                Item = service.Name,
+                Current = service.StartMode,
+                Expected = "Manual (tamed)",
                 Result = ok ? "OK" : "WARN"
             });
         }
 
-        // Tasks
         var tasks = TaskSchedulerManager.QueryTasks(OmenTargets.TaskPatterns);
         report.TasksMatched = tasks.Count;
 
-        foreach (var t in tasks.OrderBy(x => x.Path))
+        foreach (var task in tasks.OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
         {
-            // In "tamed" mode tasks are Disabled
-            var ok = !t.Enabled;
+            var ok = !task.Enabled;
             report.Snapshots.Add(new StatusSnapshot
             {
                 Area = "Tasks",
-                Item = t.Path,
-                Current = t.Enabled ? "Enabled" : "Disabled",
+                Item = task.Path,
+                Current = task.Enabled ? "Enabled" : "Disabled",
                 Expected = "Disabled (tamed)",
                 Result = ok ? "OK" : "WARN"
             });
         }
 
-        // Run entries
         var runEntries = RegistryRunManager.QueryRunEntries(OmenTargets.RunEntryPatterns);
         report.RunEntriesMatched = runEntries.Count;
 
-        foreach (var r in runEntries.OrderBy(x => x.Location).ThenBy(x => x.Name))
+        foreach (var entry in runEntries.OrderBy(x => x.Location, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase))
         {
-            // In "tamed" mode run entries should NOT exist
             report.Snapshots.Add(new StatusSnapshot
             {
                 Area = "Autostart (Run)",
-                Item = $"{r.Location} :: {r.Name}",
+                Item = $"{entry.Location} :: {entry.Name}",
                 Current = "Present",
                 Expected = "Removed (tamed)",
                 Result = "WARN"
             });
         }
 
-        // Firewall rules
         report.FirewallRulesFound = FirewallManager.CountRulesByPrefix(OmenTargets.FirewallRulePrefix);
         report.Snapshots.Add(new StatusSnapshot
         {
@@ -78,17 +70,16 @@ public sealed class UnlockerEngine
             Result = report.FirewallRulesFound > 0 ? "OK" : "INFO"
         });
 
-        // Hosts
         var hostsStatus = HostsManager.GetDomainsStatus(OmenTargets.HostsDomains, OmenTargets.HostsMarker);
-        foreach (var d in hostsStatus)
+        foreach (var domain in hostsStatus)
         {
             report.Snapshots.Add(new StatusSnapshot
             {
                 Area = "hosts",
-                Item = d.Domain,
-                Current = d.Blocked ? "Blocked" : "Not blocked",
+                Item = domain.Domain,
+                Current = domain.Blocked ? "Blocked" : "Not blocked",
                 Expected = "Blocked (when activated)",
-                Result = d.Blocked ? "OK" : "INFO"
+                Result = domain.Blocked ? "OK" : "INFO"
             });
         }
 
@@ -97,7 +88,7 @@ public sealed class UnlockerEngine
 
     public OperationReport RunDryRunDeep()
     {
-        var rep = OperationReport.Ok("Dry run completed (no changes applied).");
+        var report = OperationReport.Ok("Dry run completed (no changes applied).");
 
         var checks = new List<(string Name, Func<(bool ok, string details)> Fn)>
         {
@@ -107,6 +98,7 @@ public sealed class UnlockerEngine
             ("hosts write access", () => HostsManager.CheckWriteAccess(OmenTargets.HostsMarker)),
             ("PowerShell availability", PowerShellRunner.CheckAvailability),
             ("netsh availability", PowerShellRunner.CheckNetshAvailability),
+            ("AppX reset capability", AppxPackageManager.CheckResetCapability)
         };
 
         foreach (var (name, fn) in checks)
@@ -114,215 +106,323 @@ public sealed class UnlockerEngine
             try
             {
                 var (ok, details) = fn();
-                rep.Lines.Add(new OperationLine
+                report.Lines.Add(new OperationLine
                 {
                     Level = ok ? "OK" : "WARN",
-                    Text = $"{name}: {(ok ? "OK" : "NOT OK")} — {details}"
+                    Text = $"{name}: {(ok ? "OK" : "NOT OK")} - {details}"
                 });
             }
             catch (Exception ex)
             {
-                rep.Lines.Add(new OperationLine { Level = "WARN", Text = $"{name}: check failed — {ex.Message}" });
+                report.Lines.Add(new OperationLine { Level = "WARN", Text = $"{name}: check failed - {ex.Message}" });
             }
         }
 
-        // Discovery: what we can block in Firewall
+        if (AppxPackageManager.TryGetPrimaryPackage(OmenTargets.AppxFilters, out _, out var packageDetails))
+            report.Lines.Add(new OperationLine { Level = "OK", Text = $"AppX target: {packageDetails}" });
+        else
+            report.Lines.Add(new OperationLine { Level = "WARN", Text = $"AppX target: {packageDetails}" });
+
+        var plan = BuildActivationPlan();
+        report.Lines.Add(new OperationLine
+        {
+            Level = "INFO",
+            Text = $"Activation plan: {plan.ServicesToManual.Count} service(s), {plan.TasksToDisable.Count} task(s), {plan.RunEntriesToRemove.Count} Run entries."
+        });
+
+        var state = _stateStore.Load();
+        report.Lines.Add(new OperationLine
+        {
+            Level = "INFO",
+            Text = $"Rollback backup: {state.Services.Count} service(s), {state.Tasks.Count} task(s), {state.RunEntries.Count} Run entries."
+        });
+
         try
         {
             var exes = FirewallManager.DiscoverCandidateExecutables();
-            rep.Lines.Add(new OperationLine { Level = "INFO", Text = $"Executable discovery: {exes.Count} candidate .exe file(s) found." });
+            report.Lines.Add(new OperationLine { Level = "INFO", Text = $"Executable discovery: {exes.Count} candidate .exe file(s) found." });
 
-            foreach (var e in exes.Take(25))
-                rep.Lines.Add(new OperationLine { Level = "INFO", Text = $"  - {e}" });
+            foreach (var exe in exes.Take(25))
+                report.Lines.Add(new OperationLine { Level = "INFO", Text = $"  - {exe}" });
 
             if (exes.Count > 25)
-                rep.Lines.Add(new OperationLine { Level = "INFO", Text = $"  ... +{exes.Count - 25} more" });
+                report.Lines.Add(new OperationLine { Level = "INFO", Text = $"  ... +{exes.Count - 25} more" });
         }
         catch (Exception ex)
         {
-            rep.Lines.Add(new OperationLine { Level = "WARN", Text = $"Executable discovery failed: {ex.Message}" });
+            report.Lines.Add(new OperationLine { Level = "WARN", Text = $"Executable discovery failed: {ex.Message}" });
         }
 
-        // Snapshots (status view)
-        var status = GetStatusReport();
-        rep.SnapshotsAfter.AddRange(status.Snapshots);
-
-        rep.Success = true;
-        return rep;
+        report.SnapshotsAfter.AddRange(GetStatusReport().Snapshots);
+        return report;
     }
 
     public OperationReport Activate(UnlockerOptions options)
     {
-        var rep = OperationReport.Ok("Activation completed.");
-
-        ExecuteAggressiveFlow(
-            rep,
-            options,
-            "Activate scripts",
-            applyServices: true,
-            disableTasks: true,
-            removeRunEntries: true,
-            firewallMode: FirewallApplyMode.Activate,
-            hostsMode: HostsApplyMode.Activate);
-
-        rep.SnapshotsAfter.AddRange(GetStatusReport().Snapshots);
-        rep.Success = rep.Lines.All(l => l.Level != "ERR");
-        if (!rep.Success) rep.Title = "Activation finished with errors.";
-        return rep;
+        var report = OperationReport.Ok("Activation completed.");
+        ExecuteActivationFlow(report, options, "Activate scripts", includeProcessTermination: true);
+        FinalizeReport(report, "Activation finished with errors.");
+        return report;
     }
 
     public OperationReport Disable(UnlockerOptions options)
     {
-        var rep = OperationReport.Ok("Disable completed.");
+        var report = OperationReport.Ok("Disable completed.");
+        ExecuteDisableFlow(report, options, "Disable scripts");
+        FinalizeReport(report, "Disable finished with errors.");
 
-        ExecuteAggressiveFlow(
-            rep,
-            options,
-            "Disable scripts",
-            applyServices: false,
-            disableTasks: false,
-            removeRunEntries: false, // cannot safely restore without backups
-            firewallMode: FirewallApplyMode.Disable,
-            hostsMode: HostsApplyMode.Disable);
-
-        rep.Lines.Add(new OperationLine
+        if (!options.DryRun && report.Success)
         {
-            Level = "WARN",
-            Text = "Note: Autostart (Run) entries were removed during activation and cannot be restored without backups. " +
-                   "If you need OMEN to autostart again, reinstall/repair OMEN Gaming Hub or enable startup from its settings (if available)."
-        });
+            _stateStore.Clear();
+            report.Lines.Add(new OperationLine { Level = "INFO", Text = "State backup: cleared after successful restore." });
+        }
 
-        rep.SnapshotsAfter.AddRange(GetStatusReport().Snapshots);
-        rep.Success = rep.Lines.All(l => l.Level != "ERR");
-        if (!rep.Success) rep.Title = "Disable finished with errors.";
-        return rep;
+        return report;
     }
 
-    private static void ExecuteAggressiveFlow(
-        OperationReport rep,
-        UnlockerOptions options,
-        string title,
-        bool applyServices,
-        bool disableTasks,
-        bool removeRunEntries,
-        FirewallApplyMode firewallMode,
-        HostsApplyMode hostsMode)
+    public OperationReport ResetAndReapply(UnlockerOptions options)
     {
-        rep.Lines.Add(new OperationLine { Level = "INFO", Text = $"{title}: started." });
+        var report = OperationReport.Ok("Reset and reapply completed.");
 
-        // 1) Kill processes (optional)
-        if (options.TryKillProcesses)
-        {
-            try
-            {
-                var killed = ProcessManager.TryKillMatchingProcesses(OmenTargets.ProcessNamePatterns, options.DryRun);
-                rep.Lines.Add(new OperationLine
-                {
-                    Level = "INFO",
-                    Text = options.DryRun
-                        ? $"Dry run: would terminate {killed.Count} process(es)."
-                        : $"Terminated {killed.Count} process(es)."
-                });
+        report.Lines.Add(new OperationLine { Level = "INFO", Text = "Reset and reapply: started." });
 
-                foreach (var k in killed.Take(12))
-                    rep.Lines.Add(new OperationLine { Level = "INFO", Text = $"  - {k}" });
+        AddProcessTerminationLines(report, options);
 
-                if (killed.Count > 12)
-                    rep.Lines.Add(new OperationLine { Level = "INFO", Text = $"  ... +{killed.Count - 12} more" });
-            }
-            catch (Exception ex)
-            {
-                rep.Lines.Add(new OperationLine { Level = "WARN", Text = $"Process termination step failed: {ex.Message}" });
-            }
-        }
-
-        // 2) Services
         try
         {
-            var res = applyServices
-                ? ServiceManager.SetServicesStartMode(OmenTargets.ServicePatterns, "Manual", options.DryRun)
-                : ServiceManager.SetServicesStartMode(OmenTargets.ServicePatterns, "Automatic", options.DryRun);
-
-            rep.Lines.AddRange(res);
+            report.Lines.AddRange(AppxPackageManager.ResetPackage(OmenTargets.AppxFilters, options.DryRun));
         }
         catch (Exception ex)
         {
-            rep.Lines.Add(new OperationLine { Level = "ERR", Text = $"Services step failed: {ex.Message}" });
+            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Reset: unexpected failure - {ex.Message}" });
         }
 
-        // 3) Tasks
-        try
-        {
-            var res = disableTasks
-                ? TaskSchedulerManager.SetTasksEnabled(OmenTargets.TaskPatterns, enabled: false, options.DryRun)
-                : TaskSchedulerManager.SetTasksEnabled(OmenTargets.TaskPatterns, enabled: true, options.DryRun);
-
-            rep.Lines.AddRange(res);
-        }
-        catch (Exception ex)
-        {
-            rep.Lines.Add(new OperationLine { Level = "ERR", Text = $"Tasks step failed: {ex.Message}" });
-        }
-
-        // 4) Run entries (activate only)
-        if (removeRunEntries)
-        {
-            try
-            {
-                var res = RegistryRunManager.RemoveRunEntries(OmenTargets.RunEntryPatterns, options.DryRun);
-                rep.Lines.AddRange(res);
-            }
-            catch (Exception ex)
-            {
-                rep.Lines.Add(new OperationLine { Level = "ERR", Text = $"Registry Run step failed: {ex.Message}" });
-            }
-        }
-
-        // 5) Firewall
-        if (options.ManageFirewall)
-        {
-            try
-            {
-                var res = firewallMode == FirewallApplyMode.Activate
-                    ? FirewallManager.ActivateFirewallBlock(OmenTargets.FirewallRulePrefix, options.DryRun)
-                    : FirewallManager.DisableFirewallBlock(OmenTargets.FirewallRulePrefix, options.DryRun);
-
-                rep.Lines.AddRange(res);
-            }
-            catch (Exception ex)
-            {
-                rep.Lines.Add(new OperationLine { Level = "ERR", Text = $"Firewall step failed: {ex.Message}" });
-            }
-        }
-        else
-        {
-            rep.Lines.Add(new OperationLine { Level = "INFO", Text = "Firewall step skipped by options." });
-        }
-
-        // 6) hosts
-        if (options.ManageHosts)
-        {
-            try
-            {
-                var res = hostsMode == HostsApplyMode.Activate
-                    ? HostsManager.ActivateHostsBlock(OmenTargets.HostsDomains, OmenTargets.HostsMarker, options.DryRun)
-                    : HostsManager.DisableHostsBlock(OmenTargets.HostsMarker, options.DryRun);
-
-                rep.Lines.AddRange(res);
-            }
-            catch (Exception ex)
-            {
-                rep.Lines.Add(new OperationLine { Level = "ERR", Text = $"hosts step failed: {ex.Message}" });
-            }
-        }
-        else
-        {
-            rep.Lines.Add(new OperationLine { Level = "INFO", Text = "hosts step skipped by options." });
-        }
-
-        rep.Lines.Add(new OperationLine { Level = "INFO", Text = $"{title}: finished." });
+        ExecuteActivationFlow(report, options, "Refresh taming after reset", includeProcessTermination: false);
+        FinalizeReport(report, "Reset and reapply finished with errors.");
+        return report;
     }
 
-    private enum FirewallApplyMode { Activate, Disable }
-    private enum HostsApplyMode { Activate, Disable }
+    private void ExecuteActivationFlow(OperationReport report, UnlockerOptions options, string title, bool includeProcessTermination)
+    {
+        report.Lines.Add(new OperationLine { Level = "INFO", Text = $"{title}: started." });
+
+        var plan = BuildActivationPlan();
+        PersistActivationBackups(plan, options, report);
+
+        if (includeProcessTermination)
+            AddProcessTerminationLines(report, options);
+
+        try
+        {
+            var serviceTargets = plan.ServicesToManual
+                .Select(x => new ServiceStartModeTarget(x.Name, "Manual"));
+
+            report.Lines.AddRange(ServiceManager.ApplyStartModeTargets(serviceTargets, options.DryRun));
+        }
+        catch (Exception ex)
+        {
+            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Services step failed: {ex.Message}" });
+        }
+
+        try
+        {
+            var taskTargets = plan.TasksToDisable
+                .Select(x => new TaskEnableTarget(x.Path, false));
+
+            report.Lines.AddRange(TaskSchedulerManager.ApplyEnabledTargets(taskTargets, options.DryRun));
+        }
+        catch (Exception ex)
+        {
+            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Tasks step failed: {ex.Message}" });
+        }
+
+        try
+        {
+            report.Lines.AddRange(RegistryRunManager.RemoveEntries(plan.RunEntriesToRemove, options.DryRun));
+        }
+        catch (Exception ex)
+        {
+            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Registry Run step failed: {ex.Message}" });
+        }
+
+        ApplyFirewall(report, options, activate: true);
+        ApplyHosts(report, options, activate: true);
+
+        report.Lines.Add(new OperationLine { Level = "INFO", Text = $"{title}: finished." });
+    }
+
+    private void ExecuteDisableFlow(OperationReport report, UnlockerOptions options, string title)
+    {
+        report.Lines.Add(new OperationLine { Level = "INFO", Text = $"{title}: started." });
+
+        ApplyFirewall(report, options, activate: false);
+        ApplyHosts(report, options, activate: false);
+
+        var state = _stateStore.Load();
+
+        try
+        {
+            report.Lines.AddRange(RegistryRunManager.RestoreEntries(state.RunEntries, options.DryRun));
+        }
+        catch (Exception ex)
+        {
+            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Registry Run restore failed: {ex.Message}" });
+        }
+
+        try
+        {
+            var taskTargets = state.Tasks.Select(x => new TaskEnableTarget(x.Path, x.OriginalEnabled));
+            report.Lines.AddRange(TaskSchedulerManager.ApplyEnabledTargets(taskTargets, options.DryRun));
+        }
+        catch (Exception ex)
+        {
+            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Tasks restore failed: {ex.Message}" });
+        }
+
+        try
+        {
+            var serviceTargets = state.Services.Select(x => new ServiceStartModeTarget(x.Name, x.OriginalStartMode));
+            report.Lines.AddRange(ServiceManager.ApplyStartModeTargets(serviceTargets, options.DryRun));
+        }
+        catch (Exception ex)
+        {
+            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Services restore failed: {ex.Message}" });
+        }
+
+        report.Lines.Add(new OperationLine { Level = "INFO", Text = $"{title}: finished." });
+    }
+
+    private void PersistActivationBackups(ActivationPlan plan, UnlockerOptions options, OperationReport report)
+    {
+        if (options.DryRun)
+        {
+            report.Lines.Add(new OperationLine { Level = "INFO", Text = "State backup: skipped in dry run." });
+            return;
+        }
+
+        try
+        {
+            var serviceBackups = plan.ServicesToManual.Select(x => new ServiceBackup(x.Name, x.StartMode));
+            var taskBackups = plan.TasksToDisable.Select(x => new TaskBackup(x.Path, x.Enabled));
+            var runEntryBackups = plan.RunEntriesToRemove.Select(x => new RunEntryBackup(x.Hive, x.View, x.Name, x.Value));
+
+            _stateStore.PersistBackups(serviceBackups, taskBackups, runEntryBackups);
+
+            report.Lines.Add(new OperationLine
+            {
+                Level = "INFO",
+                Text = $"State backup: saved {plan.ServicesToManual.Count} service(s), {plan.TasksToDisable.Count} task(s), {plan.RunEntriesToRemove.Count} Run entries."
+            });
+        }
+        catch (Exception ex)
+        {
+            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"State backup failed: {ex.Message}" });
+        }
+    }
+
+    private static void AddProcessTerminationLines(OperationReport report, UnlockerOptions options)
+    {
+        if (!options.TryKillProcesses)
+            return;
+
+        try
+        {
+            var killed = ProcessManager.TryKillMatchingProcesses(OmenTargets.ProcessNamePatterns, options.DryRun);
+            report.Lines.Add(new OperationLine
+            {
+                Level = "INFO",
+                Text = options.DryRun
+                    ? $"Dry run: would terminate {killed.Count} process(es)."
+                    : $"Terminated {killed.Count} process(es)."
+            });
+
+            foreach (var item in killed.Take(12))
+                report.Lines.Add(new OperationLine { Level = "INFO", Text = $"  - {item}" });
+
+            if (killed.Count > 12)
+                report.Lines.Add(new OperationLine { Level = "INFO", Text = $"  ... +{killed.Count - 12} more" });
+        }
+        catch (Exception ex)
+        {
+            report.Lines.Add(new OperationLine { Level = "WARN", Text = $"Process termination step failed: {ex.Message}" });
+        }
+    }
+
+    private static void ApplyFirewall(OperationReport report, UnlockerOptions options, bool activate)
+    {
+        if (!options.ManageFirewall)
+        {
+            report.Lines.Add(new OperationLine { Level = "INFO", Text = "Firewall step skipped by options." });
+            return;
+        }
+
+        try
+        {
+            var lines = activate
+                ? FirewallManager.ActivateFirewallBlock(OmenTargets.FirewallRulePrefix, options.DryRun)
+                : FirewallManager.DisableFirewallBlock(OmenTargets.FirewallRulePrefix, options.DryRun);
+
+            report.Lines.AddRange(lines);
+        }
+        catch (Exception ex)
+        {
+            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Firewall step failed: {ex.Message}" });
+        }
+    }
+
+    private static void ApplyHosts(OperationReport report, UnlockerOptions options, bool activate)
+    {
+        if (!options.ManageHosts)
+        {
+            report.Lines.Add(new OperationLine { Level = "INFO", Text = "hosts step skipped by options." });
+            return;
+        }
+
+        try
+        {
+            var lines = activate
+                ? HostsManager.ActivateHostsBlock(OmenTargets.HostsDomains, OmenTargets.HostsMarker, options.DryRun)
+                : HostsManager.DisableHostsBlock(OmenTargets.HostsMarker, options.DryRun);
+
+            report.Lines.AddRange(lines);
+        }
+        catch (Exception ex)
+        {
+            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"hosts step failed: {ex.Message}" });
+        }
+    }
+
+    private void FinalizeReport(OperationReport report, string errorTitle)
+    {
+        report.SnapshotsAfter.Clear();
+        report.SnapshotsAfter.AddRange(GetStatusReport().Snapshots);
+
+        report.Success = report.Lines.All(x => x.Level != "ERR");
+        if (!report.Success)
+            report.Title = errorTitle;
+    }
+
+    private static ActivationPlan BuildActivationPlan()
+    {
+        var services = ServiceManager.QueryServices(OmenTargets.ServicePatterns)
+            .DistinctBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(x => !x.StartMode.Equals("Manual", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var tasks = TaskSchedulerManager.QueryTasks(OmenTargets.TaskPatterns)
+            .DistinctBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
+            .Where(x => x.Enabled)
+            .ToList();
+
+        var runEntries = RegistryRunManager.QueryRunEntries(OmenTargets.RunEntryPatterns)
+            .DistinctBy(x => $"{x.Hive}|{x.View}|{x.Name}", StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return new ActivationPlan(services, tasks, runEntries);
+    }
+
+    private sealed record ActivationPlan(
+        List<ServiceItem> ServicesToManual,
+        List<TaskItem> TasksToDisable,
+        List<RunEntry> RunEntriesToRemove);
 }

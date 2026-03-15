@@ -6,6 +6,7 @@ public static class OmenTargets
 
     public const string FirewallRulePrefix = "Tame-OMEN";
     public const string HostsMarker = "# OmenGamingHubUnlocker";
+    public const string PrimaryAppxPackageName = "AD2F1837.OMENCommandCenter";
 
     // Domains blocked via hosts (when Activate)
     public static readonly string[] HostsDomains =
