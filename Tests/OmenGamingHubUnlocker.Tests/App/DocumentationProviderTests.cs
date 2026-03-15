@@ -8,8 +8,9 @@ public sealed class DocumentationProviderTests
         var lines = DocumentationProvider.GetLines(DocumentationDocument.Help);
 
         Assert.NotEmpty(lines);
-        Assert.Contains(lines, line => line.Contains("Quick start:", StringComparison.Ordinal));
-        Assert.Contains(lines, line => line.Contains("Recommended workflow after an OMEN update:", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.Contains("Menu guide:", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.Contains("It does not uninstall OMEN.", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.Contains("Simple recommendation:", StringComparison.Ordinal));
     }
 
     [Fact]
