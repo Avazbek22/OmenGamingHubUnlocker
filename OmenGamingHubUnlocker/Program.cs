@@ -1,7 +1,3 @@
-using OmenGamingHubUnlocker.App;
-using OmenGamingHubUnlocker.Core;
-using OmenGamingHubUnlocker.UI;
-
 try
 {
     Console.Title = "OmenGamingHubUnlocker by Avazbek22";

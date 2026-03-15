@@ -1,6 +1,3 @@
-using System.Text;
-using OmenGamingHubUnlocker.Core;
-
 namespace OmenGamingHubUnlocker.UI;
 
 /// <summary>

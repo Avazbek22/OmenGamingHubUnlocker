@@ -1,5 +1,3 @@
-using OmenGamingHubUnlocker.Windows;
-
 namespace OmenGamingHubUnlocker.Core;
 
 /// <summary>

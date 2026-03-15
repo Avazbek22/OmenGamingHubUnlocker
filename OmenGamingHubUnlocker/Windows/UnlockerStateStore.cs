@@ -1,6 +1,3 @@
-using System.Text.Json;
-using Microsoft.Win32;
-
 namespace OmenGamingHubUnlocker.Windows;
 
 /// <summary>
@@ -40,8 +37,14 @@ public sealed class UnlockerStateStore
 
     private readonly string _stateFilePath;
 
-    public UnlockerStateStore()
+    public UnlockerStateStore(string? stateFilePath = null)
     {
+        if (!string.IsNullOrWhiteSpace(stateFilePath))
+        {
+            _stateFilePath = stateFilePath;
+            return;
+        }
+
         var stateDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "OmenGamingHubUnlocker");

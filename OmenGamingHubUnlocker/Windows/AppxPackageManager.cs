@@ -1,7 +1,3 @@
-using System.Text;
-using System.Text.Json;
-using OmenGamingHubUnlocker.Core;
-
 namespace OmenGamingHubUnlocker.Windows;
 
 /// <summary>

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Security.Principal;
 
 namespace OmenGamingHubUnlocker.App;

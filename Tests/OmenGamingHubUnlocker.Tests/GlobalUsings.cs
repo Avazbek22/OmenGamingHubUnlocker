@@ -1,0 +1,9 @@
+global using Microsoft.Win32;
+global using System.Diagnostics;
+global using System.Text;
+global using OmenGamingHubUnlocker.App;
+global using OmenGamingHubUnlocker.Core;
+global using OmenGamingHubUnlocker.Tests.Infrastructure;
+global using OmenGamingHubUnlocker.UI;
+global using OmenGamingHubUnlocker.Windows;
+global using Xunit;

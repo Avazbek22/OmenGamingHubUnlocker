@@ -1,6 +1,4 @@
-using System.Text;
 using System.Text.RegularExpressions;
-using OmenGamingHubUnlocker.Core;
 
 namespace OmenGamingHubUnlocker.Windows;
 

@@ -1,6 +1,4 @@
 using System.Management;
-using OmenGamingHubUnlocker.Core;
-
 namespace OmenGamingHubUnlocker.Windows;
 
 /// <summary>

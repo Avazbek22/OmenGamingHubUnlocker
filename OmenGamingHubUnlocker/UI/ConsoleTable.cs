@@ -103,7 +103,7 @@ public static class ConsoleTable
             ? Math.Clamp(Math.Max(colRName.Length, resultValues.Max(value => value.Length)), 8, 22)
             : 0;
 
-        var consoleWidth = Console.WindowWidth;
+        var consoleWidth = TryGetConsoleWidth();
         if (consoleWidth > 0)
         {
             var total = showResultColumn
@@ -689,5 +689,17 @@ public static class ConsoleTable
         if (s.Length <= width) return s;
         if (width <= 3) return s.Substring(0, width);
         return s.Substring(0, width - 3) + "...";
+    }
+
+    private static int TryGetConsoleWidth()
+    {
+        try
+        {
+            return Console.WindowWidth;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 }

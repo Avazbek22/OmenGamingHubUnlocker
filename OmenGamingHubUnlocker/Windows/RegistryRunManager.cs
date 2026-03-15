@@ -1,6 +1,3 @@
-using Microsoft.Win32;
-using OmenGamingHubUnlocker.Core;
-
 namespace OmenGamingHubUnlocker.Windows;
 
 /// <summary>
