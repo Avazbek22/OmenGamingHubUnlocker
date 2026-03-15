@@ -12,7 +12,7 @@ public static class PowerShellRunner
             "WindowsPowerShell\\v1.0\\powershell.exe");
 
         if (File.Exists(systemPowerShellPath))
-            return (true, "powershell.exe found.");
+            return (true, Text.Get("manager.powershell.found"));
 
         return (
             TryRun("powershell", "-NoProfile -Command \"$PSVersionTable.PSVersion.ToString()\"", out var output, out var error, 15_000),
@@ -22,7 +22,9 @@ public static class PowerShellRunner
     public static (bool ok, string details) CheckNetshAvailability()
     {
         var netshPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "netsh.exe");
-        return File.Exists(netshPath) ? (true, "netsh.exe found.") : (false, "netsh.exe not found.");
+        return File.Exists(netshPath)
+            ? (true, Text.Get("manager.powershell.netshFound"))
+            : (false, Text.Get("manager.powershell.netshNotFound"));
     }
 
     /// <summary>
@@ -66,7 +68,7 @@ public static class PowerShellRunner
             if (!process.Start())
             {
                 standardOutput = string.Empty;
-                standardError = "Failed to start process.";
+                standardError = Text.Get("manager.powershell.startFailed");
                 return false;
             }
 
@@ -79,7 +81,7 @@ public static class PowerShellRunner
                 process.WaitForExit();
 
                 standardOutput = outputBuilder.ToString().TrimEnd();
-                standardError = $"Process timed out after {timeoutMs} ms.";
+                standardError = Text.Format("manager.powershell.timeout", timeoutMs);
                 return false;
             }
 

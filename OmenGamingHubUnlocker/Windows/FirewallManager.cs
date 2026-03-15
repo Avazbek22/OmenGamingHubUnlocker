@@ -11,11 +11,11 @@ public static class FirewallManager
         {
             var firewallPolicyType = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
             if (firewallPolicyType is null)
-                return (false, "HNetCfg.FwPolicy2 COM not available.");
+                return (false, Text.Get("manager.firewall.capabilityNotAvailable"));
 
             dynamic firewallPolicy = Activator.CreateInstance(firewallPolicyType)!;
             _ = firewallPolicy.Rules;
-            return (true, "COM access ok.");
+            return (true, Text.Get("manager.firewall.capabilityOk"));
         }
         catch (Exception exception)
         {
@@ -93,7 +93,7 @@ public static class FirewallManager
         var candidateExecutables = DiscoverCandidateExecutables();
         if (candidateExecutables.Count == 0)
         {
-            operationLines.Add(new OperationLine { Level = "WARN", Text = "Firewall: no executables discovered. No rules created." });
+            operationLines.Add(LocalizedLine.Warn("manager.firewall.noExecutables"));
             return operationLines;
         }
 
@@ -104,25 +104,21 @@ public static class FirewallManager
 
             if (dryRun)
             {
-                operationLines.Add(new OperationLine { Level = "OK", Text = $"Firewall: would block outbound: {executableName}" });
+                operationLines.Add(LocalizedLine.Ok("manager.firewall.wouldBlockOutbound", executableName));
                 continue;
             }
 
             var comRuleCreated = TryAddOutboundBlockRuleCom(ruleName, executablePath, out var comError);
             if (comRuleCreated)
             {
-                operationLines.Add(new OperationLine { Level = "OK", Text = $"Firewall: created block rule: {ruleName}" });
+                operationLines.Add(LocalizedLine.Ok("manager.firewall.createdBlockRule", ruleName));
                 continue;
             }
 
             var powerShellRuleCreated = TryAddOutboundBlockRulePowerShell(ruleName, executablePath, out var powerShellError);
-            operationLines.Add(new OperationLine
-            {
-                Level = powerShellRuleCreated ? "WARN" : "ERR",
-                Text = powerShellRuleCreated
-                    ? $"Firewall: COM failed, PowerShell fallback applied for {executableName}."
-                    : $"Firewall: failed to create rule for {executableName}. COM error: {comError}. PS error: {powerShellError}"
-            });
+            operationLines.Add(powerShellRuleCreated
+                ? LocalizedLine.Warn("manager.firewall.comFailedPowerShellApplied", executableName)
+                : LocalizedLine.Err("manager.firewall.failedToCreateRule", executableName, comError, powerShellError));
         }
 
         return operationLines;
@@ -153,7 +149,7 @@ public static class FirewallManager
 
                 if (matchingRuleNames.Count == 0)
                 {
-                    operationLines.Add(new OperationLine { Level = "INFO", Text = $"Firewall: no rules found with prefix '{prefix} - '." });
+                    operationLines.Add(LocalizedLine.Info("manager.firewall.noRulesFound", prefix));
                     return operationLines;
                 }
 
@@ -161,18 +157,18 @@ public static class FirewallManager
                 {
                     if (dryRun)
                     {
-                        operationLines.Add(new OperationLine { Level = "OK", Text = $"Firewall: would remove rule: {ruleName}" });
+                        operationLines.Add(LocalizedLine.Ok("manager.firewall.wouldRemoveRule", ruleName));
                         continue;
                     }
 
                     try
                     {
                         firewallRules.Remove(ruleName);
-                        operationLines.Add(new OperationLine { Level = "OK", Text = $"Firewall: removed rule: {ruleName}" });
+                        operationLines.Add(LocalizedLine.Ok("manager.firewall.removedRule", ruleName));
                     }
                     catch (Exception exception)
                     {
-                        operationLines.Add(new OperationLine { Level = "WARN", Text = $"Firewall: failed to remove {ruleName}: {exception.Message}" });
+                        operationLines.Add(LocalizedLine.Warn("manager.firewall.failedToRemoveRule", ruleName, exception.Message));
                     }
                 }
 
@@ -186,7 +182,7 @@ public static class FirewallManager
 
         if (dryRun)
         {
-            operationLines.Add(new OperationLine { Level = "OK", Text = $"Firewall: would remove rules by PowerShell filter: {prefix} - *" });
+            operationLines.Add(LocalizedLine.Ok("manager.firewall.wouldRemoveByFilter", prefix));
             return operationLines;
         }
 
@@ -198,13 +194,9 @@ public static class FirewallManager
             out var commandError,
             30_000);
 
-        operationLines.Add(new OperationLine
-        {
-            Level = commandSucceeded ? "OK" : "ERR",
-            Text = commandSucceeded
-                ? $"Firewall: rules removed via PowerShell filter: {prefix} - *"
-                : $"Firewall: PowerShell fallback failed: {commandError}"
-        });
+        operationLines.Add(commandSucceeded
+            ? LocalizedLine.Ok("manager.firewall.removedByFilter", prefix)
+            : LocalizedLine.Err("manager.firewall.powerShellFallbackFailed", commandError));
 
         return operationLines;
     }
@@ -218,7 +210,7 @@ public static class FirewallManager
 
             if (firewallRuleType is null || firewallPolicyType is null)
             {
-                error = "Firewall COM types not available.";
+                error = Text.Get("manager.firewall.comTypesUnavailable");
                 return false;
             }
 

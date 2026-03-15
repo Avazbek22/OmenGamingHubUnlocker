@@ -82,7 +82,7 @@ public sealed class UnlockerEngine
         report.Snapshots.Add(new StatusSnapshot
         {
             Area = "Firewall",
-            Item = $"Rules: {OmenTargets.FirewallRulePrefix} - *",
+            Item = Text.Format("status.firewallRulesItem", OmenTargets.FirewallRulePrefix),
             Current = report.FirewallRulesFound.ToString(),
             Expected = ">= 1 (when activated)",
             Result = report.FirewallRulesFound > 0 ? "OK" : "INFO"
@@ -109,17 +109,17 @@ public sealed class UnlockerEngine
     /// </summary>
     public OperationReport RunDryRunDeep()
     {
-        var report = OperationReport.Ok("Dry run completed (no changes applied).");
+        var report = OperationReport.Ok(Text.Get("engine.title.dryRunCompleted"));
 
         var checks = new List<(string Name, Func<(bool ok, string details)> Fn)>
         {
-            ("Task Scheduler COM", TaskSchedulerManager.CheckCapability),
-            ("Firewall COM (HNetCfg)", FirewallManager.CheckCapability),
-            ("WMI Services (Win32_Service)", ServiceManager.CheckCapability),
-            ("hosts write access", () => HostsManager.CheckWriteAccess(OmenTargets.HostsMarker)),
-            ("PowerShell availability", PowerShellRunner.CheckAvailability),
-            ("netsh availability", PowerShellRunner.CheckNetshAvailability),
-            ("AppX reset capability", AppxPackageManager.CheckResetCapability)
+            (Text.Get("engine.check.taskSchedulerCom"), TaskSchedulerManager.CheckCapability),
+            (Text.Get("engine.check.firewallCom"), FirewallManager.CheckCapability),
+            (Text.Get("engine.check.wmiServices"), ServiceManager.CheckCapability),
+            (Text.Get("engine.check.hostsWriteAccess"), () => HostsManager.CheckWriteAccess(OmenTargets.HostsMarker)),
+            (Text.Get("engine.check.powerShellAvailability"), PowerShellRunner.CheckAvailability),
+            (Text.Get("engine.check.netshAvailability"), PowerShellRunner.CheckNetshAvailability),
+            (Text.Get("engine.check.appxResetCapability"), AppxPackageManager.CheckResetCapability)
         };
 
         foreach (var (name, fn) in checks)
@@ -130,48 +130,48 @@ public sealed class UnlockerEngine
                 report.Lines.Add(new OperationLine
                 {
                     Level = ok ? "OK" : "WARN",
-                    Text = $"{name}: {(ok ? "OK" : "NOT OK")} - {details}"
+                    Text = Text.Format("engine.check.result", name, ok ? Text.Get("engine.check.okLabel") : Text.Get("engine.check.notOkLabel"), details)
                 });
             }
             catch (Exception ex)
             {
-                report.Lines.Add(new OperationLine { Level = "WARN", Text = $"{name}: check failed - {ex.Message}" });
+                report.Lines.Add(LocalizedLine.Warn("engine.check.failed", name, ex.Message));
             }
         }
 
         if (AppxPackageManager.TryGetPrimaryPackage(OmenTargets.AppxFilters, out _, out var packageDetails))
-            report.Lines.Add(new OperationLine { Level = "OK", Text = $"AppX target: {packageDetails}" });
+            report.Lines.Add(LocalizedLine.Ok("engine.appxTarget", packageDetails));
         else
-            report.Lines.Add(new OperationLine { Level = "WARN", Text = $"AppX target: {packageDetails}" });
+            report.Lines.Add(LocalizedLine.Warn("engine.appxTarget", packageDetails));
 
         var plan = CollectActivationPlan();
         report.Lines.Add(new OperationLine
         {
             Level = "INFO",
-            Text = $"Activation plan: {plan.ServicesToManual.Count} service(s), {plan.TasksToDisable.Count} task(s), {plan.RunEntriesToRemove.Count} Run entries."
+            Text = Text.Format("engine.activationPlan", plan.ServicesToManual.Count, plan.TasksToDisable.Count, plan.RunEntriesToRemove.Count)
         });
 
         var state = _stateStore.Load();
         report.Lines.Add(new OperationLine
         {
             Level = "INFO",
-            Text = $"Rollback backup: {state.Services.Count} service(s), {state.Tasks.Count} task(s), {state.RunEntries.Count} Run entries."
+            Text = Text.Format("engine.rollbackBackup", state.Services.Count, state.Tasks.Count, state.RunEntries.Count)
         });
 
         try
         {
             var exes = FirewallManager.DiscoverCandidateExecutables();
-            report.Lines.Add(new OperationLine { Level = "INFO", Text = $"Executable discovery: {exes.Count} candidate .exe file(s) found." });
+            report.Lines.Add(LocalizedLine.Info("engine.executableDiscoveryFound", exes.Count));
 
             foreach (var exe in exes.Take(25))
                 report.Lines.Add(new OperationLine { Level = "INFO", Text = $"  - {exe}" });
 
             if (exes.Count > 25)
-                report.Lines.Add(new OperationLine { Level = "INFO", Text = $"  ... +{exes.Count - 25} more" });
+                report.Lines.Add(LocalizedLine.Info("common.moreItems", exes.Count - 25));
         }
         catch (Exception ex)
         {
-            report.Lines.Add(new OperationLine { Level = "WARN", Text = $"Executable discovery failed: {ex.Message}" });
+            report.Lines.Add(LocalizedLine.Warn("engine.executableDiscoveryFailed", ex.Message));
         }
 
         report.SnapshotsAfter.AddRange(GetStatusReport().Snapshots);
@@ -183,10 +183,10 @@ public sealed class UnlockerEngine
     /// </summary>
     public OperationReport Activate(UnlockerOptions options)
     {
-        var report = OperationReport.Ok("Activation completed.");
-        RunActivationFlow(report, options, "Activate scripts", includeProcessTermination: true);
-        RunActivationStabilizationSweeps(report, options, "Activation stabilization", killProcesses: options.TryKillProcesses);
-        CompleteReport(report, "Activation finished with errors.");
+        var report = OperationReport.Ok(Text.Get("engine.title.activationCompleted"));
+        RunActivationFlow(report, options, Text.Get("engine.flow.activateScripts"), includeProcessTermination: true);
+        RunActivationStabilizationSweeps(report, options, Text.Get("engine.flow.activationStabilization"), killProcesses: options.TryKillProcesses);
+        CompleteReport(report, Text.Get("engine.title.activationFailed"));
         return report;
     }
 
@@ -195,14 +195,14 @@ public sealed class UnlockerEngine
     /// </summary>
     public OperationReport Disable(UnlockerOptions options)
     {
-        var report = OperationReport.Ok("Disable completed.");
-        RunDisableFlow(report, options, "Disable scripts");
-        CompleteReport(report, "Disable finished with errors.");
+        var report = OperationReport.Ok(Text.Get("engine.title.disableCompleted"));
+        RunDisableFlow(report, options, Text.Get("engine.flow.disableScripts"));
+        CompleteReport(report, Text.Get("engine.title.disableFailed"));
 
         if (!options.DryRun && report.Success)
         {
             _stateStore.Clear();
-            report.Lines.Add(new OperationLine { Level = "INFO", Text = "State backup: cleared after successful restore." });
+            report.Lines.Add(LocalizedLine.Info("engine.stateBackupCleared"));
         }
 
         return report;
@@ -213,9 +213,9 @@ public sealed class UnlockerEngine
     /// </summary>
     public OperationReport ResetAndReapply(UnlockerOptions options)
     {
-        var report = OperationReport.Ok("Reset and reapply completed.");
+        var report = OperationReport.Ok(Text.Get("engine.title.resetCompleted"));
 
-        report.Lines.Add(new OperationLine { Level = "INFO", Text = "Reset and reapply: started." });
+        report.Lines.Add(LocalizedLine.Info("engine.resetStarted"));
 
         AddProcessTerminationLines(report, options);
 
@@ -225,19 +225,19 @@ public sealed class UnlockerEngine
         }
         catch (Exception ex)
         {
-            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Reset: unexpected failure - {ex.Message}" });
+            report.Lines.Add(LocalizedLine.Err("engine.resetUnexpectedFailure", ex.Message));
         }
 
         WaitForResetSideEffectsToSettle(report, options);
-        RunActivationFlow(report, options, "Refresh taming after reset", includeProcessTermination: false);
-        RunActivationStabilizationSweeps(report, options, "Post-reset stabilization", killProcesses: true);
-        CompleteReport(report, "Reset and reapply finished with errors.");
+        RunActivationFlow(report, options, Text.Get("engine.flow.refreshAfterReset"), includeProcessTermination: false);
+        RunActivationStabilizationSweeps(report, options, Text.Get("engine.flow.postResetStabilization"), killProcesses: true);
+        CompleteReport(report, Text.Get("engine.title.resetFailed"));
         return report;
     }
 
     private void RunActivationFlow(OperationReport report, UnlockerOptions options, string title, bool includeProcessTermination)
     {
-        report.Lines.Add(new OperationLine { Level = "INFO", Text = $"{title}: started." });
+        report.Lines.Add(LocalizedLine.Info("common.started", title));
 
         var activationPlan = CollectActivationPlan();
         SaveActivationBackups(activationPlan, options, report);
@@ -250,12 +250,12 @@ public sealed class UnlockerEngine
         ApplyFirewall(report, options, activate: true);
         ApplyHosts(report, options, activate: true);
 
-        report.Lines.Add(new OperationLine { Level = "INFO", Text = $"{title}: finished." });
+        report.Lines.Add(LocalizedLine.Info("common.finished", title));
     }
 
     private void RunDisableFlow(OperationReport report, UnlockerOptions options, string title)
     {
-        report.Lines.Add(new OperationLine { Level = "INFO", Text = $"{title}: started." });
+        report.Lines.Add(LocalizedLine.Info("common.started", title));
 
         ApplyFirewall(report, options, activate: false);
         ApplyHosts(report, options, activate: false);
@@ -268,7 +268,7 @@ public sealed class UnlockerEngine
         }
         catch (Exception ex)
         {
-            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Registry Run restore failed: {ex.Message}" });
+            report.Lines.Add(LocalizedLine.Err("engine.registryRestoreFailed", ex.Message));
         }
 
         try
@@ -278,7 +278,7 @@ public sealed class UnlockerEngine
         }
         catch (Exception ex)
         {
-            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Tasks restore failed: {ex.Message}" });
+            report.Lines.Add(LocalizedLine.Err("engine.tasksRestoreFailed", ex.Message));
         }
 
         try
@@ -288,17 +288,17 @@ public sealed class UnlockerEngine
         }
         catch (Exception ex)
         {
-            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Services restore failed: {ex.Message}" });
+            report.Lines.Add(LocalizedLine.Err("engine.servicesRestoreFailed", ex.Message));
         }
 
-        report.Lines.Add(new OperationLine { Level = "INFO", Text = $"{title}: finished." });
+        report.Lines.Add(LocalizedLine.Info("common.finished", title));
     }
 
     private void SaveActivationBackups(ActivationPlan activationPlan, UnlockerOptions options, OperationReport report)
     {
         if (options.DryRun)
         {
-            report.Lines.Add(new OperationLine { Level = "INFO", Text = "State backup: skipped in dry run." });
+            report.Lines.Add(LocalizedLine.Info("engine.stateBackupSkipped"));
             return;
         }
 
@@ -313,12 +313,12 @@ public sealed class UnlockerEngine
             report.Lines.Add(new OperationLine
             {
                 Level = "INFO",
-                Text = $"State backup: saved {activationPlan.ServicesToManual.Count} service(s), {activationPlan.TasksToDisable.Count} task(s), {activationPlan.RunEntriesToRemove.Count} Run entries."
+                Text = Text.Format("engine.stateBackupSaved", activationPlan.ServicesToManual.Count, activationPlan.TasksToDisable.Count, activationPlan.RunEntriesToRemove.Count)
             });
         }
         catch (Exception ex)
         {
-            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"State backup failed: {ex.Message}" });
+            report.Lines.Add(LocalizedLine.Err("engine.stateBackupFailed", ex.Message));
         }
     }
 
@@ -326,7 +326,7 @@ public sealed class UnlockerEngine
     {
         if (options.DryRun)
         {
-            report.Lines.Add(new OperationLine { Level = "INFO", Text = $"{title}: skipped in dry run." });
+            report.Lines.Add(LocalizedLine.Info("common.skippedInDryRun", title));
             return;
         }
 
@@ -348,7 +348,7 @@ public sealed class UnlockerEngine
                 report.Lines.Add(new OperationLine
                 {
                     Level = "INFO",
-                    Text = $"{title}: system is stable after sweep {attempt - 1}."
+                    Text = Text.Format("engine.stabilizationSystemStable", title, attempt - 1)
                 });
                 return;
             }
@@ -356,7 +356,7 @@ public sealed class UnlockerEngine
             report.Lines.Add(new OperationLine
             {
                 Level = "INFO",
-                Text = $"{title}: sweep {attempt} found {runningProcesses.Count} process(es), {activationPlan.ServicesToManual.Count} service change(s), {activationPlan.TasksToDisable.Count} task change(s), {activationPlan.RunEntriesToRemove.Count} Run entry change(s)."
+                Text = Text.Format("engine.stabilizationSweepFound", title, attempt, runningProcesses.Count, activationPlan.ServicesToManual.Count, activationPlan.TasksToDisable.Count, activationPlan.RunEntriesToRemove.Count)
             });
 
             SaveActivationBackups(activationPlan, options, report);
@@ -372,14 +372,14 @@ public sealed class UnlockerEngine
     {
         if (options.DryRun)
         {
-            report.Lines.Add(new OperationLine { Level = "INFO", Text = "Post-reset settle wait: skipped in dry run." });
+            report.Lines.Add(LocalizedLine.Info("engine.postResetSettleSkipped"));
             return;
         }
 
         report.Lines.Add(new OperationLine
         {
             Level = "INFO",
-            Text = $"Waiting {ActivationStabilizationDelayMs / 1000} second(s) for OMEN post-reset registration to settle."
+            Text = Text.Format("engine.waitingPostResetSettle", ActivationStabilizationDelayMs / 1000)
         });
 
         Thread.Sleep(ActivationStabilizationDelayMs);
@@ -396,7 +396,7 @@ public sealed class UnlockerEngine
         }
         catch (Exception ex)
         {
-            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Services step failed: {ex.Message}" });
+            report.Lines.Add(LocalizedLine.Err("engine.servicesStepFailed", ex.Message));
         }
 
         try
@@ -408,7 +408,7 @@ public sealed class UnlockerEngine
         }
         catch (Exception ex)
         {
-            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Tasks step failed: {ex.Message}" });
+            report.Lines.Add(LocalizedLine.Err("engine.tasksStepFailed", ex.Message));
         }
 
         try
@@ -417,7 +417,7 @@ public sealed class UnlockerEngine
         }
         catch (Exception ex)
         {
-            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Registry Run step failed: {ex.Message}" });
+            report.Lines.Add(LocalizedLine.Err("engine.registryRunStepFailed", ex.Message));
         }
     }
 
@@ -433,19 +433,19 @@ public sealed class UnlockerEngine
             {
                 Level = "INFO",
                 Text = options.DryRun
-                    ? $"Dry run: would terminate {killed.Count} process(es)."
-                    : $"Terminated {killed.Count} process(es)."
+                    ? Text.Format("engine.processTerminationDryRun", killed.Count)
+                    : Text.Format("engine.processTerminationDone", killed.Count)
             });
 
             foreach (var item in killed.Take(12))
                 report.Lines.Add(new OperationLine { Level = "INFO", Text = $"  - {item}" });
 
             if (killed.Count > 12)
-                report.Lines.Add(new OperationLine { Level = "INFO", Text = $"  ... +{killed.Count - 12} more" });
+                report.Lines.Add(LocalizedLine.Info("common.moreItems", killed.Count - 12));
         }
         catch (Exception ex)
         {
-            report.Lines.Add(new OperationLine { Level = "WARN", Text = $"Process termination step failed: {ex.Message}" });
+            report.Lines.Add(LocalizedLine.Warn("engine.processTerminationFailed", ex.Message));
         }
     }
 
@@ -453,7 +453,7 @@ public sealed class UnlockerEngine
     {
         if (!options.ManageFirewall)
         {
-            report.Lines.Add(new OperationLine { Level = "INFO", Text = "Firewall step skipped by options." });
+            report.Lines.Add(LocalizedLine.Info("engine.firewallStepSkipped"));
             return;
         }
 
@@ -467,7 +467,7 @@ public sealed class UnlockerEngine
         }
         catch (Exception ex)
         {
-            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Firewall step failed: {ex.Message}" });
+            report.Lines.Add(LocalizedLine.Err("engine.firewallStepFailed", ex.Message));
         }
     }
 
@@ -475,7 +475,7 @@ public sealed class UnlockerEngine
     {
         if (!options.ManageHosts)
         {
-            report.Lines.Add(new OperationLine { Level = "INFO", Text = "hosts step skipped by options." });
+            report.Lines.Add(LocalizedLine.Info("engine.hostsStepSkipped"));
             return;
         }
 
@@ -489,7 +489,7 @@ public sealed class UnlockerEngine
         }
         catch (Exception ex)
         {
-            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"hosts step failed: {ex.Message}" });
+            report.Lines.Add(LocalizedLine.Err("engine.hostsStepFailed", ex.Message));
         }
     }
 

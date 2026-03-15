@@ -42,7 +42,7 @@ public static class RegistryRunManager
         {
             return
             [
-                new OperationLine { Level = "INFO", Text = "Registry Run: nothing to remove." }
+                LocalizedLine.Info("manager.registry.nothingToRemove")
             ];
         }
 
@@ -62,7 +62,7 @@ public static class RegistryRunManager
                         operationLines.Add(new OperationLine
                         {
                             Level = "WARN",
-                            Text = $"Registry Run: key not found for {entry.Location} -> {entry.Name}"
+                            Text = Text.Format("manager.registry.keyNotFound", entry.Location, entry.Name)
                         });
                     }
 
@@ -76,7 +76,7 @@ public static class RegistryRunManager
                         operationLines.Add(new OperationLine
                         {
                             Level = "OK",
-                            Text = $"Registry Run: would remove {entry.Location} -> {entry.Name}"
+                            Text = Text.Format("manager.registry.wouldRemove", entry.Location, entry.Name)
                         });
                         continue;
                     }
@@ -85,7 +85,7 @@ public static class RegistryRunManager
                     operationLines.Add(new OperationLine
                     {
                         Level = "OK",
-                        Text = $"Registry Run: removed {entry.Location} -> {entry.Name}"
+                        Text = Text.Format("manager.registry.removed", entry.Location, entry.Name)
                     });
                 }
             }
@@ -94,7 +94,7 @@ public static class RegistryRunManager
                 operationLines.Add(new OperationLine
                 {
                     Level = "WARN",
-                    Text = $"Registry Run: failed in {FormatLocation(entryGroup.Key.Hive, entryGroup.Key.View)}: {exception.Message}"
+                    Text = Text.Format("manager.registry.failedIn", FormatLocation(entryGroup.Key.Hive, entryGroup.Key.View), exception.Message)
                 });
             }
         }
@@ -112,7 +112,7 @@ public static class RegistryRunManager
         {
             return
             [
-                new OperationLine { Level = "INFO", Text = "Registry Run: no backup state found." }
+                LocalizedLine.Info("manager.registry.noBackupState")
             ];
         }
 
@@ -132,7 +132,7 @@ public static class RegistryRunManager
                         operationLines.Add(new OperationLine
                         {
                             Level = "ERR",
-                            Text = $"Registry Run: failed to open {FormatLocation(entry.Hive, entry.View)} for restore."
+                            Text = Text.Format("manager.registry.failedToOpenForRestore", FormatLocation(entry.Hive, entry.View))
                         });
                     }
 
@@ -146,7 +146,7 @@ public static class RegistryRunManager
                         operationLines.Add(new OperationLine
                         {
                             Level = "OK",
-                            Text = $"Registry Run: would restore {FormatLocation(entry.Hive, entry.View)}\\{RunEntry.RunSubKey} -> {entry.Name}"
+                            Text = Text.Format("manager.registry.wouldRestore", FormatLocation(entry.Hive, entry.View), RunEntry.RunSubKey, entry.Name)
                         });
                         continue;
                     }
@@ -155,7 +155,7 @@ public static class RegistryRunManager
                     operationLines.Add(new OperationLine
                     {
                         Level = "OK",
-                        Text = $"Registry Run: restored {FormatLocation(entry.Hive, entry.View)}\\{RunEntry.RunSubKey} -> {entry.Name}"
+                        Text = Text.Format("manager.registry.restored", FormatLocation(entry.Hive, entry.View), RunEntry.RunSubKey, entry.Name)
                     });
                 }
             }
@@ -164,7 +164,7 @@ public static class RegistryRunManager
                 operationLines.Add(new OperationLine
                 {
                     Level = "ERR",
-                    Text = $"Registry Run: restore failed in {FormatLocation(entryGroup.Key.Hive, entryGroup.Key.View)}: {exception.Message}"
+                    Text = Text.Format("manager.registry.restoreFailedIn", FormatLocation(entryGroup.Key.Hive, entryGroup.Key.View), exception.Message)
                 });
             }
         }

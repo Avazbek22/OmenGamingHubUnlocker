@@ -12,6 +12,7 @@ Menu guide:
  - Reset Omen Gaming Hub & Activate scripts: resets the OMEN app and immediately applies protection again.
  - Help: opens this page.
  - About: short project information.
+ - Change language: switches between English and Russian.
 
 What Activate scripts does:
  - Puts OMEN-related services into a safer startup mode.

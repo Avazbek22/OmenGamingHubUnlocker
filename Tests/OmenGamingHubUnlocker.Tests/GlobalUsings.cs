@@ -3,6 +3,7 @@ global using System.Diagnostics;
 global using System.Text;
 global using OmenGamingHubUnlocker.App;
 global using OmenGamingHubUnlocker.Core;
+global using OmenGamingHubUnlocker.Localization;
 global using OmenGamingHubUnlocker.Tests.Infrastructure;
 global using OmenGamingHubUnlocker.UI;
 global using OmenGamingHubUnlocker.Windows;

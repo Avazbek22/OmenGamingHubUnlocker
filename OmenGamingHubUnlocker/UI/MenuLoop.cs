@@ -12,14 +12,15 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
             ConsoleHelpers.TryClearScreen();
             RenderMainMenuHeader();
 
-            Console.WriteLine("[1] Check status");
-            Console.WriteLine("[2] Dry run");
-            Console.WriteLine("[3] Activate scripts");
-            Console.WriteLine("[4] Disable scripts");
-            Console.WriteLine("[5] Reset Omen Gaming Hub & Activate scripts");
-            Console.WriteLine("[6] Help");
-            Console.WriteLine("[7] About");
-            Console.WriteLine("[8] Exit");
+            Console.WriteLine($"[1] {Text.Get("menu.checkStatus")}");
+            Console.WriteLine($"[2] {Text.Get("menu.dryRun")}");
+            Console.WriteLine($"[3] {Text.Get("menu.activateScripts")}");
+            Console.WriteLine($"[4] {Text.Get("menu.disableScripts")}");
+            Console.WriteLine($"[5] {Text.Get("menu.resetAndActivate")}");
+            Console.WriteLine($"[6] {Text.Get("menu.help")}");
+            Console.WriteLine($"[7] {Text.Get("menu.about")}");
+            Console.WriteLine($"[8] {Text.Get("menu.changeLanguage")}");
+            Console.WriteLine($"[9] {Text.Get("menu.exit")}");
             Console.WriteLine();
 
             var selectedAction = ConsoleHelpers.ReadMenuChoice();
@@ -48,9 +49,12 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
                     ShowAbout();
                     break;
                 case "8":
+                    Text.ToggleLanguage();
+                    break;
+                case "9":
                     return;
                 default:
-                    ConsoleHelpers.WriteWarning("Invalid choice.");
+                    ConsoleHelpers.WriteWarning(Text.Get("common.invalidChoice"));
                     ConsoleHelpers.Pause();
                     break;
             }
@@ -63,17 +67,17 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
 
         ConsoleHelpers.WithColor(ConsoleColor.White, () =>
         {
-            Console.WriteLine($"OS: {appInfo.OsDisplayName}");
-            Console.WriteLine($"Runtime: {appInfo.FrameworkDescription}");
+            Console.WriteLine($"{Text.Get("header.os")}: {appInfo.OsDisplayName}");
+            Console.WriteLine($"{Text.Get("header.runtime")}: {appInfo.FrameworkDescription}");
         });
 
         if (appInfo.IsAdministrator)
         {
-            ConsoleHelpers.WithColor(ConsoleColor.Green, () => Console.WriteLine("Admin: Yes"));
+            ConsoleHelpers.WithColor(ConsoleColor.Green, () => Console.WriteLine(Text.Get("header.adminYes")));
         }
         else
         {
-            ConsoleHelpers.WithColor(ConsoleColor.Yellow, () => Console.WriteLine("Admin: No (some actions will be blocked)"));
+            ConsoleHelpers.WithColor(ConsoleColor.Yellow, () => Console.WriteLine(Text.Get("header.adminNo")));
         }
 
         Console.WriteLine();
@@ -90,7 +94,7 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
     private void ShowStatus()
     {
         ConsoleHelpers.TryClearScreen();
-        RenderScreenHeader("Status");
+        RenderScreenHeader(Text.Get("screen.status"));
 
         var statusReport = engine.GetStatusReport();
         PrintStatusReport(statusReport, ConsoleTable.StatusIntent.Neutral, showResultColumn: false, predictive: false);
@@ -100,24 +104,24 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
     private void ShowDryRun()
     {
         ConsoleHelpers.TryClearScreen();
-        RenderScreenHeader("Dry run");
+        RenderScreenHeader(Text.Get("screen.dryRun"));
 
-        ConsoleHelpers.WriteBullets("What will be checked", new[]
+        ConsoleHelpers.WriteBullets(Text.Get("ui.dryRun.whatWillBeChecked"), new[]
         {
-            "Detect HP/OMEN services and their startup type",
-            "Detect HP/OMEN scheduled tasks and their state",
-            "Detect HP/OMEN autostart entries (Run keys)",
-            "Check firewall capability and existing rules",
-            "Check hosts-file capability and current block entries",
-            "Check AppX reset capability and OMEN package discovery",
-            "Predict what would change if you activate scripts"
+            Text.Get("ui.dryRun.check1"),
+            Text.Get("ui.dryRun.check2"),
+            Text.Get("ui.dryRun.check3"),
+            Text.Get("ui.dryRun.check4"),
+            Text.Get("ui.dryRun.check5"),
+            Text.Get("ui.dryRun.check6"),
+            Text.Get("ui.dryRun.check7")
         });
 
-        if (!ConsoleHelpers.ConfirmEnterOrEscape("Press Enter to start dry run or Esc to cancel..."))
+        if (!ConsoleHelpers.ConfirmEnterOrEscape(Text.Get("ui.dryRun.confirm")))
             return;
 
         ConsoleHelpers.TryClearScreen();
-        RenderScreenHeader("Dry run");
+        RenderScreenHeader(Text.Get("screen.dryRun"));
 
         var operationReport = engine.RunDryRunDeep();
         PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterActivate, showResultColumn: true, predictive: true);
@@ -127,24 +131,24 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
     private void RunActivate()
     {
         ConsoleHelpers.TryClearScreen();
-        RenderScreenHeader("Activation");
+        RenderScreenHeader(Text.Get("screen.activation"));
 
-        ConsoleHelpers.WriteBullets("What will happen", new[]
+        ConsoleHelpers.WriteBullets(Text.Get("ui.activate.whatWillHappen"), new[]
         {
-            "Stop OMEN from starting automatically with Windows (services / tasks / Run entries)",
-            "Block OMEN executables from going online (Windows Firewall)",
-            "Block known OMEN endpoints via hosts file",
-            "Save rollback state before changing services / tasks / Run entries"
+            Text.Get("ui.activate.step1"),
+            Text.Get("ui.activate.step2"),
+            Text.Get("ui.activate.step3"),
+            Text.Get("ui.activate.step4")
         });
 
-        ConsoleHelpers.WriteHint("Tip: close OMEN Gaming Hub before running activation (recommended).");
-        ConsoleHelpers.WriteHint("Nothing is uninstalled. This tool only changes startup, firewall and hosts settings.");
+        ConsoleHelpers.WriteHint(Text.Get("ui.activate.tipCloseOmen"));
+        ConsoleHelpers.WriteHint(Text.Get("ui.activate.tipNoUninstall"));
 
-        if (!ConsoleHelpers.ConfirmEnterOrEscape("Press Enter to start activation or Esc to cancel..."))
+        if (!ConsoleHelpers.ConfirmEnterOrEscape(Text.Get("ui.activate.confirm")))
             return;
 
         ConsoleHelpers.TryClearScreen();
-        RenderScreenHeader("Activation");
+        RenderScreenHeader(Text.Get("screen.activation"));
 
         var operationReport = engine.Activate(UnlockerOptions.ForActivate());
         PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterActivate, showResultColumn: true, predictive: false);
@@ -154,21 +158,21 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
     private void RunDisable()
     {
         ConsoleHelpers.TryClearScreen();
-        RenderScreenHeader("Disable");
+        RenderScreenHeader(Text.Get("screen.disable"));
 
-        ConsoleHelpers.WriteBullets("What will happen", new[]
+        ConsoleHelpers.WriteBullets(Text.Get("ui.disable.whatWillHappen"), new[]
         {
-            "Remove firewall block rules created by this tool",
-            "Remove hosts entries created by this tool",
-            "Restore services, tasks and Run entries from saved backup state",
-            "Clear saved rollback state after a successful restore"
+            Text.Get("ui.disable.step1"),
+            Text.Get("ui.disable.step2"),
+            Text.Get("ui.disable.step3"),
+            Text.Get("ui.disable.step4")
         });
 
-        if (!ConsoleHelpers.ConfirmEnterOrEscape("Press Enter to start disable or Esc to cancel..."))
+        if (!ConsoleHelpers.ConfirmEnterOrEscape(Text.Get("ui.disable.confirm")))
             return;
 
         ConsoleHelpers.TryClearScreen();
-        RenderScreenHeader("Disable");
+        RenderScreenHeader(Text.Get("screen.disable"));
 
         var operationReport = engine.Disable(UnlockerOptions.ForDisable());
         PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterDisable, showResultColumn: true, predictive: false);
@@ -178,24 +182,24 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
     private void RunResetAndReapply()
     {
         ConsoleHelpers.TryClearScreen();
-        RenderScreenHeader("Reset OMEN app");
+        RenderScreenHeader(Text.Get("screen.resetOmenApp"));
 
-        ConsoleHelpers.WriteBullets("What will happen", new[]
+        ConsoleHelpers.WriteBullets(Text.Get("ui.reset.whatWillHappen"), new[]
         {
-            "Terminate OMEN-related processes before reset",
-            "Run the Windows AppX reset for the installed OMEN package",
-            "Immediately refresh firewall and hosts blocks after reset",
-            "Re-apply service, task and Run-entry taming so the updated app stays constrained"
+            Text.Get("ui.reset.step1"),
+            Text.Get("ui.reset.step2"),
+            Text.Get("ui.reset.step3"),
+            Text.Get("ui.reset.step4")
         });
 
-        ConsoleHelpers.WriteWarning("This is equivalent to the Windows app reset for OMEN and will clear the app's stored data.");
-        ConsoleHelpers.WriteHint("Use this when OMEN updated itself, broke your current bypass, or got stuck after an update.");
+        ConsoleHelpers.WriteWarning(Text.Get("ui.reset.warning"));
+        ConsoleHelpers.WriteHint(Text.Get("ui.reset.hint"));
 
-        if (!ConsoleHelpers.ConfirmEnterOrEscape("Press Enter to start reset and reapply or Esc to cancel..."))
+        if (!ConsoleHelpers.ConfirmEnterOrEscape(Text.Get("ui.reset.confirm")))
             return;
 
         ConsoleHelpers.TryClearScreen();
-        RenderScreenHeader("Reset OMEN app");
+        RenderScreenHeader(Text.Get("screen.resetOmenApp"));
 
         var operationReport = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
         PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterActivate, showResultColumn: true, predictive: false);
@@ -203,10 +207,10 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
     }
 
     private void ShowAbout()
-        => ShowDocumentationScreen("About", DocumentationDocument.About);
+        => ShowDocumentationScreen(Text.Get("screen.about"), DocumentationDocument.About);
 
     private void ShowHelp()
-        => ShowDocumentationScreen("Help", DocumentationDocument.Help);
+        => ShowDocumentationScreen(Text.Get("screen.help"), DocumentationDocument.Help);
 
     private static void ShowDocumentationScreen(string title, DocumentationDocument document)
     {
@@ -227,10 +231,10 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
         bool showResultColumn,
         bool predictive)
     {
-        ConsoleHelpers.WriteSuccess("Status collected.");
+        ConsoleHelpers.WriteSuccess(Text.Get("common.statusCollected"));
         Console.WriteLine(new string('-', 16));
 
-        ConsoleHelpers.WriteSection("Snapshot");
+        ConsoleHelpers.WriteSection(Text.Get("common.snapshot"));
         ConsoleTable.PrintStatusTable(statusReport.Snapshots, tableIntent, showResultColumn, predictive);
     }
 
@@ -257,7 +261,7 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
             ConsoleHelpers.PrintOperationLinesAnimated(operationReport.Lines);
         }
 
-        ConsoleHelpers.WriteSection("Snapshot");
+        ConsoleHelpers.WriteSection(Text.Get("common.snapshot"));
         ConsoleTable.PrintStatusTable(operationReport.SnapshotsAfter, tableIntent, showResultColumn, predictive);
     }
 }

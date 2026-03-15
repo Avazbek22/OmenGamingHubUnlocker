@@ -24,8 +24,8 @@ Write-Output 'Reset-AppxPackage is available.'
 
         var commandSucceeded = TryRunPowerShell(script, out var standardOutput, out var standardError, 20_000);
         return commandSucceeded
-            ? (true, standardOutput.Trim())
-            : (false, string.IsNullOrWhiteSpace(standardError) ? "Reset-AppxPackage is not available." : standardError.Trim());
+            ? (true, Text.Get("manager.appx.resetAvailable"))
+            : (false, string.IsNullOrWhiteSpace(standardError) ? Text.Get("manager.appx.resetNotAvailable") : standardError.Trim());
     }
 
     /// <summary>
@@ -69,7 +69,7 @@ Get-AppxPackage |
 
         if (package is null)
         {
-            details = "OMEN AppX package was not found.";
+            details = Text.Get("manager.appx.packageNotFound");
             return false;
         }
 
@@ -86,19 +86,15 @@ Get-AppxPackage |
 
         if (!TryGetPrimaryPackage(filters, out var package, out var packageDescription) || package is null)
         {
-            lines.Add(new OperationLine { Level = "ERR", Text = $"Reset: {packageDescription}" });
+            lines.Add(LocalizedLine.Err("manager.appx.packageNotFound"));
             return lines;
         }
 
-        lines.Add(new OperationLine { Level = "INFO", Text = $"Reset target: {packageDescription}" });
+        lines.Add(LocalizedLine.Info("manager.appx.resetTarget", packageDescription));
 
         if (dryRun)
         {
-            lines.Add(new OperationLine
-            {
-                Level = "OK",
-                Text = $"Reset: would run Windows app reset for {package.PackageFullName}"
-            });
+            lines.Add(LocalizedLine.Ok("manager.appx.wouldRunReset", package.PackageFullName));
             return lines;
         }
 
@@ -110,13 +106,9 @@ Write-Output 'Reset completed.'
 """;
 
         var commandSucceeded = TryRunPowerShell(script, out var standardOutput, out var standardError, 120_000);
-        lines.Add(new OperationLine
-        {
-            Level = commandSucceeded ? "OK" : "ERR",
-            Text = commandSucceeded
-                ? $"Reset: Windows app reset completed for {package.Name}."
-                : $"Reset: failed for {package.Name}. {FirstNonEmpty(standardError, standardOutput, "Unknown error.")}"
-        });
+        lines.Add(commandSucceeded
+            ? LocalizedLine.Ok("manager.appx.resetCompleted", package.Name)
+            : LocalizedLine.Err("manager.appx.resetFailed", package.Name, FirstNonEmpty(standardError, standardOutput, Text.Get("manager.appx.unknownError"))));
 
         return lines;
     }

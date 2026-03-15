@@ -20,11 +20,11 @@ public static class HostsManager
         {
             var hostsFilePath = WindowsPaths.HostsPath;
             if (!File.Exists(hostsFilePath))
-                return (false, $"hosts file not found: {hostsFilePath}");
+                return (false, Text.Format("manager.hosts.fileNotFound", hostsFilePath));
 
             // Opening the file for read/write without touching the contents is enough to validate permissions.
             using var stream = new FileStream(hostsFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
-            return (true, "hosts file is accessible for read/write.");
+            return (true, Text.Get("manager.hosts.accessibleForReadWrite"));
         }
         catch (Exception exception)
         {
@@ -55,7 +55,7 @@ public static class HostsManager
 
         if (!File.Exists(hostsFilePath))
         {
-            operationLines.Add(new OperationLine { Level = "WARN", Text = $"hosts: file not found: {hostsFilePath}" });
+            operationLines.Add(LocalizedLine.Warn("manager.hosts.fileNotFound", hostsFilePath));
             return operationLines;
         }
 
@@ -66,7 +66,7 @@ public static class HostsManager
         }
         catch (Exception exception)
         {
-            operationLines.Add(new OperationLine { Level = "ERR", Text = $"hosts: cannot read: {exception.Message}" });
+            operationLines.Add(LocalizedLine.Err("manager.hosts.cannotRead", exception.Message));
             return operationLines;
         }
 
@@ -81,7 +81,7 @@ public static class HostsManager
 
         if (linesToAppend.Count == 0)
         {
-            operationLines.Add(new OperationLine { Level = "INFO", Text = "hosts: nothing to add (already present)." });
+            operationLines.Add(LocalizedLine.Info("manager.hosts.nothingToAdd"));
             return operationLines;
         }
 
@@ -89,16 +89,14 @@ public static class HostsManager
         {
             if (dryRun)
             {
-                operationLines.Add(new OperationLine { Level = "OK", Text = $"hosts: would add: {lineToAppend}" });
+                operationLines.Add(LocalizedLine.Ok("manager.hosts.wouldAdd", lineToAppend));
                 continue;
             }
 
             var appendSucceeded = TryAppendLineWithRetry(hostsFilePath, lineToAppend, out var appendError);
-            operationLines.Add(new OperationLine
-            {
-                Level = appendSucceeded ? "OK" : "WARN",
-                Text = appendSucceeded ? $"hosts: added: {lineToAppend}" : $"hosts: failed to add line: {appendError}"
-            });
+            operationLines.Add(appendSucceeded
+                ? LocalizedLine.Ok("manager.hosts.added", lineToAppend)
+                : LocalizedLine.Warn("manager.hosts.failedToAdd", appendError));
         }
 
         return operationLines;
@@ -111,7 +109,7 @@ public static class HostsManager
 
         if (!File.Exists(hostsFilePath))
         {
-            operationLines.Add(new OperationLine { Level = "WARN", Text = $"hosts: file not found: {hostsFilePath}" });
+            operationLines.Add(LocalizedLine.Warn("manager.hosts.fileNotFound", hostsFilePath));
             return operationLines;
         }
 
@@ -122,7 +120,7 @@ public static class HostsManager
         }
         catch (Exception exception)
         {
-            operationLines.Add(new OperationLine { Level = "ERR", Text = $"hosts: cannot read: {exception.Message}" });
+            operationLines.Add(LocalizedLine.Err("manager.hosts.cannotRead", exception.Message));
             return operationLines;
         }
 
@@ -134,24 +132,24 @@ public static class HostsManager
 
         if (removedLineCount <= 0)
         {
-            operationLines.Add(new OperationLine { Level = "INFO", Text = "hosts: no marker lines found to remove." });
+            operationLines.Add(LocalizedLine.Info("manager.hosts.noMarkerLines"));
             return operationLines;
         }
 
         if (dryRun)
         {
-            operationLines.Add(new OperationLine { Level = "OK", Text = $"hosts: would remove {removedLineCount} line(s) with marker '{marker}'." });
+            operationLines.Add(LocalizedLine.Ok("manager.hosts.wouldRemove", removedLineCount, marker));
             return operationLines;
         }
 
         try
         {
             File.WriteAllLines(hostsFilePath, remainingLines, Encoding.ASCII);
-            operationLines.Add(new OperationLine { Level = "OK", Text = $"hosts: removed {removedLineCount} line(s)." });
+            operationLines.Add(LocalizedLine.Ok("manager.hosts.removed", removedLineCount));
         }
         catch (Exception exception)
         {
-            operationLines.Add(new OperationLine { Level = "ERR", Text = $"hosts: failed to write: {exception.Message}" });
+            operationLines.Add(LocalizedLine.Err("manager.hosts.failedToWrite", exception.Message));
         }
 
         return operationLines;

@@ -27,7 +27,7 @@ public static class ConsoleTable
         var tableRows = ExtractRows(snapshots);
         if (tableRows.Count == 0)
         {
-            ConsoleHelpers.WriteHint("No status table data.");
+            ConsoleHelpers.WriteHint(Text.Get("table.noStatusData"));
             return false;
         }
 
@@ -91,16 +91,22 @@ public static class ConsoleTable
             currentValues[index] ??= string.Empty;
         }
 
-        const string colAName = "Area";
-        const string colIName = "Item";
-        const string colCName = "Current";
-        const string colRName = "Result";
+        var displayAreaValues = areaValues.Select(LocalizeAreaValue).ToList();
+        var displayCurrentValues = currentValues
+            .Select((value, index) => LocalizeCurrentValue(areaValues[index], value))
+            .ToList();
+        var displayResultValues = resultValues.Select(LocalizeResultValue).ToList();
 
-        var widthA = Math.Clamp(Math.Max(colAName.Length, areaValues.Max(value => value.Length)), 8, 22);
+        var colAName = Text.Get("table.column.area");
+        var colIName = Text.Get("table.column.item");
+        var colCName = Text.Get("table.column.current");
+        var colRName = Text.Get("table.column.result");
+
+        var widthA = Math.Clamp(Math.Max(colAName.Length, displayAreaValues.Max(value => value.Length)), 8, 22);
         var widthI = Math.Clamp(Math.Max(colIName.Length, itemValues.Max(value => value.Length)), 12, 62);
-        var widthC = Math.Clamp(Math.Max(colCName.Length, currentValues.Max(value => value.Length)), 10, 70);
+        var widthC = Math.Clamp(Math.Max(colCName.Length, displayCurrentValues.Max(value => value.Length)), 10, 70);
         var widthR = showResultColumn
-            ? Math.Clamp(Math.Max(colRName.Length, resultValues.Max(value => value.Length)), 8, 22)
+            ? Math.Clamp(Math.Max(colRName.Length, displayResultValues.Max(value => value.Length)), 8, 22)
             : 0;
 
         var consoleWidth = TryGetConsoleWidth();
@@ -129,10 +135,10 @@ public static class ConsoleTable
 
             for (var index = 0; index < tableRows.Count; index++)
             {
-                var area = Trunc(areaValues[index], widthA);
+                var area = Trunc(displayAreaValues[index], widthA);
                 var item = Trunc(itemValues[index], widthI);
-                var current = Trunc(currentValues[index], widthC);
-                var result = Trunc(resultValues[index], widthR);
+                var current = Trunc(displayCurrentValues[index], widthC);
+                var result = Trunc(displayResultValues[index], widthR);
 
                 Console.Write(area.PadRight(widthA));
                 Console.Write(" | ");
@@ -141,7 +147,7 @@ public static class ConsoleTable
                 Console.Write(current.PadRight(widthC));
                 Console.Write(" | ");
 
-                ConsoleHelpers.WithColor(ResultColor(result), () => Console.Write(result.PadRight(widthR)));
+                ConsoleHelpers.WithColor(ResultColor(resultValues[index]), () => Console.Write(result.PadRight(widthR)));
                 Console.WriteLine();
             }
         }
@@ -155,9 +161,9 @@ public static class ConsoleTable
 
             for (var index = 0; index < tableRows.Count; index++)
             {
-                var area = Trunc(areaValues[index], widthA);
+                var area = Trunc(displayAreaValues[index], widthA);
                 var item = Trunc(itemValues[index], widthI);
-                var current = Trunc(currentValues[index], widthC);
+                var current = Trunc(displayCurrentValues[index], widthC);
 
                 Console.Write(area.PadRight(widthA));
                 Console.Write(" | ");
@@ -186,17 +192,17 @@ public static class ConsoleTable
         if (a.Contains("service"))
         {
             if (eff == StatusIntent.AfterActivate)
-                return ContainsAny(cur, "manual") ? "Will keep Manual" : "Will set Manual";
+                return ContainsAny(cur, "manual") ? "PREDICT_SERVICE_MANUAL_KEEP" : "PREDICT_SERVICE_MANUAL_SET";
 
-            return ContainsAny(cur, "auto", "automatic", "delayed") ? "Will keep Auto" : "Will set Auto";
+            return ContainsAny(cur, "auto", "automatic", "delayed") ? "PREDICT_SERVICE_AUTO_KEEP" : "PREDICT_SERVICE_AUTO_SET";
         }
 
         if (a.Contains("task"))
         {
             if (eff == StatusIntent.AfterActivate)
-                return ContainsAny(cur, "disabled") ? "Will keep Disabled" : "Will disable";
+                return ContainsAny(cur, "disabled") ? "PREDICT_TASK_DISABLED_KEEP" : "PREDICT_TASK_DISABLE";
 
-            return ContainsAny(cur, "enabled") ? "Will keep Enabled" : "Will enable";
+            return ContainsAny(cur, "enabled") ? "PREDICT_TASK_ENABLED_KEEP" : "PREDICT_TASK_ENABLE";
         }
 
         if (a.Contains("firewall"))
@@ -204,29 +210,29 @@ public static class ConsoleTable
             if (TryExtractInt(cur, out var n))
             {
                 if (eff == StatusIntent.AfterActivate)
-                    return n > 0 ? "Will refresh rules" : "Will create rules";
-                return n > 0 ? "Will remove rules" : "No rules to remove";
+                    return n > 0 ? "PREDICT_FIREWALL_REFRESH" : "PREDICT_FIREWALL_CREATE";
+                return n > 0 ? "PREDICT_FIREWALL_REMOVE" : "PREDICT_FIREWALL_NO_RULES";
             }
 
-            return eff == StatusIntent.AfterActivate ? "Will (re)create rules" : "Will remove rules";
+            return eff == StatusIntent.AfterActivate ? "PREDICT_FIREWALL_RECREATE" : "PREDICT_FIREWALL_REMOVE";
         }
 
         if (a.Contains("hosts"))
         {
             if (eff == StatusIntent.AfterActivate)
-                return ContainsAny(cur, "not blocked") ? "Will block" : "Will keep blocked";
+                return ContainsAny(cur, "not blocked") ? "PREDICT_HOSTS_BLOCK" : "PREDICT_HOSTS_KEEP_BLOCKED";
 
-            return ContainsAny(cur, "not blocked") ? "No entries to remove" : "Will remove entries";
+            return ContainsAny(cur, "not blocked") ? "PREDICT_HOSTS_NO_ENTRIES" : "PREDICT_HOSTS_REMOVE_ENTRIES";
         }
 
         if (a.Contains("run") || a.Contains("autostart") || a.Contains("startup"))
         {
             if (eff == StatusIntent.AfterActivate)
-                return "Will remove autostart";
-            return "Cannot restore (manual)";
+                return "PREDICT_RUN_REMOVE_AUTOSTART";
+            return "PREDICT_RUN_CANNOT_RESTORE";
         }
 
-        return "Will check";
+        return "PREDICT_CHECK";
     }
 
     // ------------------------------------------------------------
@@ -442,7 +448,8 @@ public static class ConsoleTable
 
         if (s.StartsWith("Will ", StringComparison.OrdinalIgnoreCase) ||
             s.StartsWith("No ", StringComparison.OrdinalIgnoreCase) ||
-            s.StartsWith("Cannot ", StringComparison.OrdinalIgnoreCase))
+            s.StartsWith("Cannot ", StringComparison.OrdinalIgnoreCase) ||
+            s.StartsWith("PREDICT_", StringComparison.OrdinalIgnoreCase))
             return ConsoleColor.Cyan;
 
         var u = s.ToUpperInvariant();
@@ -673,7 +680,7 @@ public static class ConsoleTable
         Console.WriteLine();
         ConsoleHelpers.WithColor(ConsoleColor.Cyan, () =>
         {
-            Console.WriteLine("Item");
+            Console.WriteLine(Text.Get("table.fallback.item"));
             Console.WriteLine(new string('-', 64));
         });
 
@@ -701,5 +708,68 @@ public static class ConsoleTable
         {
             return 0;
         }
+    }
+
+    private static string LocalizeAreaValue(string area)
+    {
+        return area switch
+        {
+            "Processes" => Text.Get("area.processes"),
+            "Services" => Text.Get("area.services"),
+            "Tasks" => Text.Get("area.tasks"),
+            "Autostart (Run)" => Text.Get("area.autostartRun"),
+            "Firewall" => Text.Get("area.firewall"),
+            "hosts" => Text.Get("area.hosts"),
+            "General" => Text.Get("area.general"),
+            _ => area
+        };
+    }
+
+    private static string LocalizeCurrentValue(string area, string current)
+    {
+        return current switch
+        {
+            "Running" => Text.Get("state.running"),
+            "Manual" => Text.Get("state.manual"),
+            "Auto" => Text.Get("state.auto"),
+            "Automatic" => Text.Get("state.automatic"),
+            "Delayed" => Text.Get("state.delayed"),
+            "Enabled" => Text.Get("state.enabled"),
+            "Disabled" => Text.Get("state.disabled"),
+            "Present" => Text.Get("state.present"),
+            "Blocked" => Text.Get("state.blocked"),
+            "Not blocked" => Text.Get("state.notBlocked"),
+            "True" => Text.Get("state.true"),
+            "False" => Text.Get("state.false"),
+            _ => current
+        };
+    }
+
+    private static string LocalizeResultValue(string result)
+    {
+        return result switch
+        {
+            "PREDICT_SERVICE_MANUAL_KEEP" => Text.Get("table.predict.serviceKeepManual"),
+            "PREDICT_SERVICE_MANUAL_SET" => Text.Get("table.predict.serviceSetManual"),
+            "PREDICT_SERVICE_AUTO_KEEP" => Text.Get("table.predict.serviceKeepAuto"),
+            "PREDICT_SERVICE_AUTO_SET" => Text.Get("table.predict.serviceSetAuto"),
+            "PREDICT_TASK_DISABLED_KEEP" => Text.Get("table.predict.taskKeepDisabled"),
+            "PREDICT_TASK_DISABLE" => Text.Get("table.predict.taskDisable"),
+            "PREDICT_TASK_ENABLED_KEEP" => Text.Get("table.predict.taskKeepEnabled"),
+            "PREDICT_TASK_ENABLE" => Text.Get("table.predict.taskEnable"),
+            "PREDICT_FIREWALL_REFRESH" => Text.Get("table.predict.firewallRefresh"),
+            "PREDICT_FIREWALL_CREATE" => Text.Get("table.predict.firewallCreate"),
+            "PREDICT_FIREWALL_REMOVE" => Text.Get("table.predict.firewallRemove"),
+            "PREDICT_FIREWALL_NO_RULES" => Text.Get("table.predict.firewallNoRules"),
+            "PREDICT_FIREWALL_RECREATE" => Text.Get("table.predict.firewallRecreate"),
+            "PREDICT_HOSTS_BLOCK" => Text.Get("table.predict.hostsBlock"),
+            "PREDICT_HOSTS_KEEP_BLOCKED" => Text.Get("table.predict.hostsKeepBlocked"),
+            "PREDICT_HOSTS_NO_ENTRIES" => Text.Get("table.predict.hostsNoEntries"),
+            "PREDICT_HOSTS_REMOVE_ENTRIES" => Text.Get("table.predict.hostsRemoveEntries"),
+            "PREDICT_RUN_REMOVE_AUTOSTART" => Text.Get("table.predict.runRemoveAutostart"),
+            "PREDICT_RUN_CANNOT_RESTORE" => Text.Get("table.predict.runCannotRestore"),
+            "PREDICT_CHECK" => Text.Get("table.predict.check"),
+            _ => result
+        };
     }
 }

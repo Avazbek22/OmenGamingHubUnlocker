@@ -21,11 +21,11 @@ public static class TaskSchedulerManager
         {
             var schedulerType = Type.GetTypeFromProgID("Schedule.Service");
             if (schedulerType is null)
-                return (false, "Schedule.Service COM not available.");
+                return (false, Text.Get("manager.taskScheduler.capabilityNotAvailable"));
 
             dynamic taskScheduler = Activator.CreateInstance(schedulerType)!;
             taskScheduler.Connect();
-            return (true, "COM connect ok.");
+            return (true, Text.Get("manager.taskScheduler.capabilityOk"));
         }
         catch (Exception exception)
         {
@@ -70,7 +70,7 @@ public static class TaskSchedulerManager
         {
             return
             [
-                new OperationLine { Level = "INFO", Text = "Tasks: nothing to change." }
+                LocalizedLine.Info("manager.tasks.nothingToChange")
             ];
         }
 
@@ -83,38 +83,35 @@ public static class TaskSchedulerManager
         {
             if (!currentTasks.TryGetValue(normalizedTaskPath, out var currentTask))
             {
-                operationLines.Add(new OperationLine { Level = "WARN", Text = $"Tasks: {normalizedTaskPath} was not found." });
+                operationLines.Add(LocalizedLine.Warn("manager.tasks.notFound", normalizedTaskPath));
                 continue;
             }
 
             if (currentTask.Enabled == desiredEnabled)
             {
-                operationLines.Add(new OperationLine
-                {
-                    Level = "INFO",
-                    Text = $"Tasks: {currentTask.Path} already {(desiredEnabled ? "enabled" : "disabled")}."
-                });
+                operationLines.Add(LocalizedLine.Info(
+                    "manager.tasks.alreadyState",
+                    currentTask.Path,
+                    desiredEnabled ? Text.Get("state.enabled") : Text.Get("state.disabled")));
                 continue;
             }
 
             if (dryRun)
             {
-                operationLines.Add(new OperationLine
-                {
-                    Level = "OK",
-                    Text = $"Tasks: would set {(desiredEnabled ? "Enabled" : "Disabled")} -> {currentTask.Path}"
-                });
+                operationLines.Add(LocalizedLine.Ok(
+                    "manager.tasks.wouldSetState",
+                    desiredEnabled ? Text.Get("state.enabled") : Text.Get("state.disabled"),
+                    currentTask.Path));
                 continue;
             }
 
             try
             {
                 SetEnabledViaCom(currentTask.Path, desiredEnabled);
-                operationLines.Add(new OperationLine
-                {
-                    Level = "OK",
-                    Text = $"Tasks: set {(desiredEnabled ? "Enabled" : "Disabled")} -> {currentTask.Path}"
-                });
+                operationLines.Add(LocalizedLine.Ok(
+                    "manager.tasks.setState",
+                    desiredEnabled ? Text.Get("state.enabled") : Text.Get("state.disabled"),
+                    currentTask.Path));
             }
             catch (Exception exception)
             {
@@ -126,13 +123,9 @@ public static class TaskSchedulerManager
                     out var fallbackError,
                     20_000);
 
-                operationLines.Add(new OperationLine
-                {
-                    Level = fallbackApplied ? "WARN" : "ERR",
-                    Text = fallbackApplied
-                        ? $"Tasks: COM failed for {currentTask.Path}, schtasks.exe fallback applied."
-                        : $"Tasks: failed for {currentTask.Path}. COM error: {exception.Message}. schtasks.exe error: {fallbackError}"
-                });
+                operationLines.Add(fallbackApplied
+                    ? LocalizedLine.Warn("manager.tasks.fallbackApplied", currentTask.Path)
+                    : LocalizedLine.Err("manager.tasks.failed", currentTask.Path, exception.Message, fallbackError));
             }
         }
 
@@ -168,7 +161,7 @@ public static class TaskSchedulerManager
     private static void SetEnabledViaCom(string taskPath, bool enabled)
     {
         var schedulerType = Type.GetTypeFromProgID("Schedule.Service")
-                            ?? throw new InvalidOperationException("Schedule.Service COM not available.");
+                            ?? throw new InvalidOperationException(Text.Get("manager.taskScheduler.capabilityNotAvailable"));
 
         dynamic taskScheduler = Activator.CreateInstance(schedulerType)!;
         taskScheduler.Connect();

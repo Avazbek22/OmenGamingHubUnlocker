@@ -22,7 +22,7 @@ public static class ServiceManager
         {
             using var searcher = new ManagementObjectSearcher("SELECT Name FROM Win32_Service");
             _ = searcher.Get().Count;
-            return (true, "WMI query ok.");
+            return (true, Text.Get("manager.services.capabilityOk"));
         }
         catch (Exception exception)
         {
@@ -59,7 +59,7 @@ public static class ServiceManager
         {
             return
             [
-                new OperationLine { Level = "INFO", Text = "Services: nothing to change." }
+                LocalizedLine.Info("manager.services.nothingToChange")
             ];
         }
 
@@ -73,23 +73,19 @@ public static class ServiceManager
         {
             if (!currentServices.TryGetValue(serviceName, out var currentService))
             {
-                operationLines.Add(new OperationLine { Level = "WARN", Text = $"Services: {serviceName} was not found." });
+                operationLines.Add(LocalizedLine.Warn("manager.services.notFound", serviceName));
                 continue;
             }
 
             if (currentService.StartMode.Equals(desiredStartMode, StringComparison.OrdinalIgnoreCase))
             {
-                operationLines.Add(new OperationLine { Level = "INFO", Text = $"Services: {serviceName} already set to {desiredStartMode}." });
+                operationLines.Add(LocalizedLine.Info("manager.services.alreadySet", serviceName, desiredStartMode));
                 continue;
             }
 
             if (dryRun)
             {
-                operationLines.Add(new OperationLine
-                {
-                    Level = "OK",
-                    Text = $"Services: would set {serviceName} -> {desiredStartMode} (was {currentService.StartMode})"
-                });
+                operationLines.Add(LocalizedLine.Ok("manager.services.wouldSet", serviceName, desiredStartMode, currentService.StartMode));
                 continue;
             }
 
@@ -101,29 +97,21 @@ public static class ServiceManager
 
                 if (wmiReturnCode == 0)
                 {
-                    operationLines.Add(new OperationLine { Level = "OK", Text = $"Services: set {serviceName} -> {desiredStartMode}" });
+                    operationLines.Add(LocalizedLine.Ok("manager.services.set", serviceName, desiredStartMode));
                     continue;
                 }
 
                 var fallbackApplied = TryApplyWithSc(serviceName, desiredStartMode, out var fallbackError);
-                operationLines.Add(new OperationLine
-                {
-                    Level = fallbackApplied ? "WARN" : "ERR",
-                    Text = fallbackApplied
-                        ? $"Services: WMI returned {wmiReturnCode} for {serviceName}, sc.exe fallback applied."
-                        : $"Services: failed to set {serviceName}. WMI returned {wmiReturnCode}. sc.exe error: {fallbackError}"
-                });
+                operationLines.Add(fallbackApplied
+                    ? LocalizedLine.Warn("manager.services.wmiFallbackApplied", wmiReturnCode, serviceName)
+                    : LocalizedLine.Err("manager.services.failedWithReturnCode", serviceName, wmiReturnCode, fallbackError));
             }
             catch (Exception exception)
             {
                 var fallbackApplied = TryApplyWithSc(serviceName, desiredStartMode, out var fallbackError);
-                operationLines.Add(new OperationLine
-                {
-                    Level = fallbackApplied ? "WARN" : "ERR",
-                    Text = fallbackApplied
-                        ? $"Services: WMI failed for {serviceName}, sc.exe fallback applied."
-                        : $"Services: failed to set {serviceName}. WMI error: {exception.Message}. sc.exe error: {fallbackError}"
-                });
+                operationLines.Add(fallbackApplied
+                    ? LocalizedLine.Warn("manager.services.exceptionFallbackApplied", serviceName)
+                    : LocalizedLine.Err("manager.services.failedWithException", serviceName, exception.Message, fallbackError));
             }
         }
 

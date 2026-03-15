@@ -26,6 +26,7 @@
 
     <ItemGroup>
         <EmbeddedResource Include="Docs\*.txt" />
+        <EmbeddedResource Include="Localization\Resources\*.json" />
     </ItemGroup>
 
 

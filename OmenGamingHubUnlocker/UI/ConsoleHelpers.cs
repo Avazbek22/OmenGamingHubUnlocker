@@ -25,7 +25,7 @@ public static class ConsoleHelpers
         {
             Console.WriteLine(text);
             Console.WriteLine();
-            Console.WriteLine("Developed by Avazbek22");
+            Console.WriteLine(Text.Format("console.developedBy", OmenTargets.Developer));
             Console.WriteLine(new string('=', Math.Max(10, text.Length)));
         });
 
@@ -99,10 +99,10 @@ public static class ConsoleHelpers
         Console.WriteLine();
     }
 
-    public static void Pause(string message = "Press any key to continue...")
+    public static void Pause(string? message = null)
     {
         Console.WriteLine();
-        WithColor(ConsoleColor.Cyan, () => Console.WriteLine(message));
+        WithColor(ConsoleColor.Cyan, () => Console.WriteLine(message ?? Text.Get("common.pressAnyKeyToContinue")));
 
         try
         {
@@ -116,7 +116,7 @@ public static class ConsoleHelpers
 
     public static string ReadMenuChoice()
     {
-        WithColor(ConsoleColor.Gray, () => Console.Write("Select: "));
+        WithColor(ConsoleColor.Gray, () => Console.Write($"{Text.Get("common.select")}: "));
 
         try
         {
@@ -131,10 +131,10 @@ public static class ConsoleHelpers
     /// <summary>
     /// Lets the user continue with Enter or cancel with Escape.
     /// </summary>
-    public static bool ConfirmEnterOrEscape(string message = "Press Enter to continue or Esc to cancel...")
+    public static bool ConfirmEnterOrEscape(string? message = null)
     {
         Console.WriteLine();
-        WithColor(ConsoleColor.Cyan, () => Console.WriteLine(message));
+        WithColor(ConsoleColor.Cyan, () => Console.WriteLine(message ?? Text.Get("common.pressEnterToContinueOrEscToCancel")));
 
         while (true)
         {

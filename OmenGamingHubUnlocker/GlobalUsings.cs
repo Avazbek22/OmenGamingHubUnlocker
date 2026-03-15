@@ -4,5 +4,6 @@ global using System.Text;
 global using System.Text.Json;
 global using OmenGamingHubUnlocker.App;
 global using OmenGamingHubUnlocker.Core;
+global using OmenGamingHubUnlocker.Localization;
 global using OmenGamingHubUnlocker.UI;
 global using OmenGamingHubUnlocker.Windows;
