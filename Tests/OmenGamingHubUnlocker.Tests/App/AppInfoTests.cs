@@ -22,7 +22,7 @@ public sealed class AppInfoTests
     [Fact]
     public void AppDisplayName_ShouldIncludeVersionTag()
     {
-        Assert.Equal("v2.0", AppInfo.AppVersionTag);
-        Assert.Equal("OmenGamingHubUnlocker v2.0", AppInfo.AppDisplayName);
+        Assert.Equal("v3.0", AppInfo.AppVersionTag);
+        Assert.Equal("OmenGamingHubUnlocker v3.0", AppInfo.AppDisplayName);
     }
 }
