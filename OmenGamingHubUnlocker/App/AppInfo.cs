@@ -12,6 +12,9 @@ public sealed class AppInfo
     private const string Windows11Label = "Windows 11";
 
     public const string AppName = "OmenGamingHubUnlocker";
+    public const string AppDisplayVersion = "2.0";
+    public const string AppVersionTag = "v" + AppDisplayVersion;
+    public const string AppDisplayName = AppName + " " + AppVersionTag;
 
     public string ExePath { get; }
     public bool IsAdministrator { get; }

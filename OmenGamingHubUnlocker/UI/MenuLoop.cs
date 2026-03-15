@@ -59,7 +59,7 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
 
     private void RenderMainMenuHeader()
     {
-        ConsoleHelpers.WriteHeader(AppInfo.AppName);
+        ConsoleHelpers.WriteHeader(AppInfo.AppDisplayName);
 
         ConsoleHelpers.WithColor(ConsoleColor.White, () =>
         {
@@ -81,7 +81,7 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
 
     private static void RenderScreenHeader(string title)
     {
-        ConsoleHelpers.WriteMiniHeader(AppInfo.AppName);
+        ConsoleHelpers.WriteMiniHeader(AppInfo.AppDisplayName);
 
         if (!string.IsNullOrWhiteSpace(title))
             ConsoleHelpers.WriteSection(title);
@@ -211,7 +211,10 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
     private static void ShowDocumentationScreen(string title, DocumentationDocument document)
     {
         ConsoleHelpers.TryClearScreen();
-        RenderScreenHeader(title);
+        ConsoleHelpers.WriteMiniHeader(AppInfo.AppName);
+
+        if (!string.IsNullOrWhiteSpace(title))
+            ConsoleHelpers.WriteSection(title);
 
         ConsoleHelpers.PrintLinesAnimated(DocumentationProvider.GetLines(document));
 
