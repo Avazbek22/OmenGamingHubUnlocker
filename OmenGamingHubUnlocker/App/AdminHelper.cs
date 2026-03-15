@@ -1,17 +1,22 @@
-﻿using System.Diagnostics;
 using System.Security.Principal;
 
 namespace OmenGamingHubUnlocker.App;
 
+/// <summary>
+/// Encapsulates elevation checks and relaunch helpers so the rest of the app can stay platform-agnostic.
+/// </summary>
 public static class AdminHelper
 {
+    /// <summary>
+    /// Returns <c>true</c> when the current process token belongs to the local Administrators group.
+    /// </summary>
     public static bool IsAdministrator()
     {
         try
         {
-            using var identity = WindowsIdentity.GetCurrent();
-            var principal = new WindowsPrincipal(identity);
-            return principal.IsInRole(WindowsBuiltInRole.Administrator);
+            using var currentIdentity = WindowsIdentity.GetCurrent();
+            var currentPrincipal = new WindowsPrincipal(currentIdentity);
+            return currentPrincipal.IsInRole(WindowsBuiltInRole.Administrator);
         }
         catch
         {
@@ -19,24 +24,28 @@ public static class AdminHelper
         }
     }
 
-    public static bool TryRelaunchAsAdministrator(string exePath, string[] args)
+    /// <summary>
+    /// Tries to relaunch the current executable through the UAC prompt.
+    /// </summary>
+    public static bool TryRelaunchAsAdministrator(string executablePath, string[] arguments)
     {
         try
         {
-            var psi = new ProcessStartInfo
+            var processStartInfo = new ProcessStartInfo
             {
-                FileName = exePath,
-                Arguments = BuildArgs(args),
+                FileName = executablePath,
+                Arguments = BuildArgumentString(arguments),
                 UseShellExecute = true,
                 Verb = "runas"
             };
 
-            Process.Start(psi);
+            Process.Start(processStartInfo);
             return true;
         }
         catch (System.ComponentModel.Win32Exception)
         {
-            return false; // user cancelled UAC
+            // The user cancelled the UAC prompt.
+            return false;
         }
         catch
         {
@@ -44,17 +53,19 @@ public static class AdminHelper
         }
     }
 
-    private static string BuildArgs(string[] args)
-        => args.Length == 0 ? string.Empty : string.Join(" ", args.Select(QuoteIfNeeded));
+    private static string BuildArgumentString(string[] arguments)
+        => arguments.Length == 0
+            ? string.Empty
+            : string.Join(" ", arguments.Select(QuoteIfNeeded));
 
-    private static string QuoteIfNeeded(string s)
+    private static string QuoteIfNeeded(string argument)
     {
-        if (string.IsNullOrWhiteSpace(s))
+        if (string.IsNullOrWhiteSpace(argument))
             return "\"\"";
 
-        if (s.Any(char.IsWhiteSpace) || s.Contains('"'))
-            return "\"" + s.Replace("\"", "\\\"") + "\"";
+        if (argument.Any(char.IsWhiteSpace) || argument.Contains('"'))
+            return "\"" + argument.Replace("\"", "\\\"") + "\"";
 
-        return s;
+        return argument;
     }
 }

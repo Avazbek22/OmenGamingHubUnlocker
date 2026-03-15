@@ -1,67 +1,79 @@
-﻿using System.Diagnostics;
-
 namespace OmenGamingHubUnlocker.Windows;
 
+/// <summary>
+/// Provides process discovery and termination helpers for OMEN-related executables.
+/// </summary>
 public static class ProcessManager
 {
     public static List<Process> FindMatchingProcesses(string[] patterns)
     {
-        var list = new List<Process>();
-        foreach (var p in Process.GetProcesses())
+        var matchingProcesses = new List<Process>();
+        var currentProcessId = Environment.ProcessId;
+
+        foreach (var process in Process.GetProcesses())
         {
             try
             {
-                var name = p.ProcessName;
-                if (patterns.Any(pt => WildcardMatch(name, pt)))
-                    list.Add(p);
+                // Never report or terminate the unlocker process itself even if its name matches an OMEN pattern.
+                if (process.Id == currentProcessId)
+                    continue;
+
+                if (patterns.Any(pattern => WildcardMatch(process.ProcessName, pattern)))
+                    matchingProcesses.Add(process);
             }
-            catch { }
+            catch
+            {
+                // Some system processes deny metadata access; ignoring them keeps discovery best-effort.
+            }
         }
 
-        return list
-            .GroupBy(p => p.Id)
-            .Select(g => g.First())
-            .OrderBy(p => p.ProcessName)
+        return matchingProcesses
+            .GroupBy(process => process.Id)
+            .Select(group => group.First())
+            .OrderBy(process => process.ProcessName, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
     public static List<string> TryKillMatchingProcesses(string[] patterns, bool dryRun)
     {
-        var killed = new List<string>();
-        var procs = FindMatchingProcesses(patterns);
+        var affectedProcesses = new List<string>();
+        var matchingProcesses = FindMatchingProcesses(patterns);
 
-        foreach (var p in procs)
+        foreach (var process in matchingProcesses)
         {
-            var label = $"{p.ProcessName} (PID {p.Id})";
+            var processLabel = $"{process.ProcessName} (PID {process.Id})";
             if (dryRun)
             {
-                killed.Add(label);
+                affectedProcesses.Add(processLabel);
                 continue;
             }
 
             try
             {
-                p.Kill(entireProcessTree: true);
-                killed.Add(label);
+                process.Kill(entireProcessTree: true);
+                affectedProcesses.Add(processLabel);
             }
             catch
             {
-                // aggressive flow should not crash
+                // Process termination is best-effort; the engine reports counts, not per-process failures.
             }
         }
 
-        return killed;
+        return affectedProcesses;
     }
 
     private static bool WildcardMatch(string input, string pattern)
     {
-        input ??= "";
-        pattern ??= "";
+        var safeInput = input ?? string.Empty;
+        var safePattern = pattern ?? string.Empty;
 
-        var regex = "^" + System.Text.RegularExpressions.Regex.Escape(pattern)
+        var regex = "^" + System.Text.RegularExpressions.Regex.Escape(safePattern)
             .Replace("\\*", ".*")
             .Replace("\\?", ".") + "$";
 
-        return System.Text.RegularExpressions.Regex.IsMatch(input, regex, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            safeInput,
+            regex,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 }

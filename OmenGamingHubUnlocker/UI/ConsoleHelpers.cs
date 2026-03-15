@@ -1,21 +1,25 @@
-﻿using System.Text;
-using OmenGamingHubUnlocker.Core;
-
 namespace OmenGamingHubUnlocker.UI;
 
+/// <summary>
+/// Contains all console-specific rendering helpers so the rest of the code can focus on business logic.
+/// </summary>
 public static class ConsoleHelpers
 {
-    // Small "terminal feel" delay before each printed line (ms).
+    /// <summary>
+    /// Adds a small pause before animated lines to make long reports easier to scan.
+    /// </summary>
     public static int LineDelayMs { get; set; } = 25;
 
-    // Adds a bit of randomness so it feels less robotic.
+    /// <summary>
+    /// Adds a bit of random jitter so repeated logs feel less mechanical.
+    /// </summary>
     public static int LineJitterMs { get; set; } = 20;
 
-    private static readonly Random Rng = new();
+    private static readonly Random RandomGenerator = new();
 
     public static void WriteHeader(string text)
     {
-        Console.OutputEncoding = Encoding.UTF8;
+        EnsureUtf8OutputEncoding();
 
         WithColor(ConsoleColor.Cyan, () =>
         {
@@ -30,7 +34,7 @@ public static class ConsoleHelpers
 
     public static void WriteMiniHeader(string text)
     {
-        Console.OutputEncoding = Encoding.UTF8;
+        EnsureUtf8OutputEncoding();
 
         WithColor(ConsoleColor.Cyan, () =>
         {
@@ -49,10 +53,33 @@ public static class ConsoleHelpers
 
     public static void WithColor(ConsoleColor color, Action action)
     {
-        var old = Console.ForegroundColor;
+        var previousColor = Console.ForegroundColor;
         Console.ForegroundColor = color;
-        try { action(); }
-        finally { Console.ForegroundColor = old; }
+
+        try
+        {
+            action();
+        }
+        finally
+        {
+            Console.ForegroundColor = previousColor;
+        }
+    }
+
+    public static void TryClearScreen()
+    {
+        try
+        {
+            Console.Clear();
+        }
+        catch (IOException)
+        {
+            Console.WriteLine();
+        }
+        catch (InvalidOperationException)
+        {
+            Console.WriteLine();
+        }
     }
 
     public static void WriteSection(string title)
@@ -62,11 +89,13 @@ public static class ConsoleHelpers
         Console.WriteLine();
     }
 
-    public static void WriteBullets(string title, IEnumerable<string> bullets)
+    public static void WriteBullets(string title, IEnumerable<string> bulletLines)
     {
         WriteSection(title);
-        foreach (var b in bullets)
-            Console.WriteLine($" - {b}");
+
+        foreach (var bulletLine in bulletLines)
+            Console.WriteLine($" - {bulletLine}");
+
         Console.WriteLine();
     }
 
@@ -74,17 +103,33 @@ public static class ConsoleHelpers
     {
         Console.WriteLine();
         WithColor(ConsoleColor.Cyan, () => Console.WriteLine(message));
-        Console.ReadKey(true);
+
+        try
+        {
+            Console.ReadKey(intercept: true);
+        }
+        catch (InvalidOperationException)
+        {
+            Console.ReadLine();
+        }
     }
 
     public static string ReadMenuChoice()
     {
         WithColor(ConsoleColor.Gray, () => Console.Write("Select: "));
-        return (Console.ReadLine() ?? "").Trim();
+
+        try
+        {
+            return (Console.ReadLine() ?? string.Empty).Trim();
+        }
+        catch (IOException)
+        {
+            return string.Empty;
+        }
     }
 
     /// <summary>
-    /// Confirm screen: Enter -> continue, Esc -> cancel.
+    /// Lets the user continue with Enter or cancel with Escape.
     /// </summary>
     public static bool ConfirmEnterOrEscape(string message = "Press Enter to continue or Esc to cancel...")
     {
@@ -93,9 +138,19 @@ public static class ConsoleHelpers
 
         while (true)
         {
-            var key = Console.ReadKey(true).Key;
-            if (key == ConsoleKey.Enter) return true;
-            if (key == ConsoleKey.Escape) return false;
+            try
+            {
+                var pressedKey = Console.ReadKey(intercept: true).Key;
+                if (pressedKey == ConsoleKey.Enter)
+                    return true;
+
+                if (pressedKey == ConsoleKey.Escape)
+                    return false;
+            }
+            catch (InvalidOperationException)
+            {
+                return true;
+            }
         }
     }
 
@@ -103,10 +158,9 @@ public static class ConsoleHelpers
     {
         foreach (var line in lines)
         {
-            DelayLine();
-
-            var color = LevelToColor(line.Level);
-            WithColor(color, () => Console.WriteLine(line.Text));
+            DelayBeforeNextLine();
+            var lineColor = LevelToColor(line.Level);
+            WithColor(lineColor, () => Console.WriteLine(line.Text));
         }
     }
 
@@ -114,16 +168,35 @@ public static class ConsoleHelpers
     {
         foreach (var line in lines)
         {
-            DelayLine();
+            DelayBeforeNextLine();
             WithColor(color, () => Console.WriteLine(line));
         }
     }
 
-    // IMPORTANT: default valueColor is WHITE (as you asked)
-    public static void PrintKeyValue(string key, string value, ConsoleColor keyColor = ConsoleColor.DarkGray, ConsoleColor valueColor = ConsoleColor.White)
+    /// <summary>
+    /// Prints a single key/value pair with separate colors for the label and the value.
+    /// </summary>
+    public static void PrintKeyValue(
+        string key,
+        string value,
+        ConsoleColor keyColor = ConsoleColor.DarkGray,
+        ConsoleColor valueColor = ConsoleColor.White)
     {
         WithColor(keyColor, () => Console.Write($"{key}: "));
         WithColor(valueColor, () => Console.WriteLine(value));
+    }
+
+    private static void EnsureUtf8OutputEncoding()
+    {
+        try
+        {
+            if (Console.OutputEncoding != Encoding.UTF8)
+                Console.OutputEncoding = Encoding.UTF8;
+        }
+        catch
+        {
+            // Encoding setup is cosmetic; logging should continue even when the console host refuses it.
+        }
     }
 
     private static ConsoleColor LevelToColor(string? level)
@@ -141,13 +214,13 @@ public static class ConsoleHelpers
         };
     }
 
-    private static void DelayLine()
+    private static void DelayBeforeNextLine()
     {
         var baseDelay = LineDelayMs;
-        var jitter = LineJitterMs <= 0 ? 0 : Rng.Next(0, LineJitterMs + 1);
-        var total = Math.Clamp(baseDelay + jitter, 0, 250);
+        var randomJitter = LineJitterMs <= 0 ? 0 : RandomGenerator.Next(0, LineJitterMs + 1);
+        var totalDelay = Math.Clamp(baseDelay + randomJitter, 0, 250);
 
-        if (total > 0)
-            Thread.Sleep(total);
+        if (totalDelay > 0)
+            Thread.Sleep(totalDelay);
     }
 }

@@ -1,20 +1,39 @@
-﻿namespace OmenGamingHubUnlocker.Core;
+namespace OmenGamingHubUnlocker.Core;
 
+/// <summary>
+/// Describes which taming actions are allowed for a specific execution flow.
+/// </summary>
 public sealed class UnlockerOptions
 {
+    /// <summary>
+    /// Runs discovery and reporting without mutating the system.
+    /// </summary>
     public bool DryRun { get; init; }
+
+    /// <summary>
+    /// Enables firewall rule management.
+    /// </summary>
     public bool ManageFirewall { get; init; } = true;
+
+    /// <summary>
+    /// Enables hosts file management.
+    /// </summary>
     public bool ManageHosts { get; init; } = true;
 
-    // Aggressive: try to terminate OMEN-related processes
+    /// <summary>
+    /// Allows the engine to stop OMEN-related processes before applying changes.
+    /// </summary>
     public bool TryKillProcesses { get; init; } = true;
 
     public static UnlockerOptions ForDryRun()
-        => new UnlockerOptions { DryRun = true, ManageFirewall = true, ManageHosts = true, TryKillProcesses = false };
+        => new() { DryRun = true, ManageFirewall = true, ManageHosts = true, TryKillProcesses = false };
 
     public static UnlockerOptions ForActivate()
-        => new UnlockerOptions { DryRun = false, ManageFirewall = true, ManageHosts = true, TryKillProcesses = true };
+        => new() { DryRun = false, ManageFirewall = true, ManageHosts = true, TryKillProcesses = true };
 
     public static UnlockerOptions ForDisable()
-        => new UnlockerOptions { DryRun = false, ManageFirewall = true, ManageHosts = true, TryKillProcesses = false };
+        => new() { DryRun = false, ManageFirewall = true, ManageHosts = true, TryKillProcesses = false };
+
+    public static UnlockerOptions ForResetAndReapply()
+        => new() { DryRun = false, ManageFirewall = true, ManageHosts = true, TryKillProcesses = true };
 }

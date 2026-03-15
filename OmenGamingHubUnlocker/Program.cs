@@ -1,7 +1,3 @@
-﻿using OmenGamingHubUnlocker.App;
-using OmenGamingHubUnlocker.Core;
-using OmenGamingHubUnlocker.UI;
-
 try
 {
     Console.Title = "OmenGamingHubUnlocker by Avazbek22";
@@ -12,23 +8,23 @@ try
         Environment.Exit(2);
     }
 
-    var appInfo = AppInfo.Create();
+    var applicationInfo = AppInfo.Create();
 
-    // Manifest already requests admin; this is a safety net.
-    if (!appInfo.IsAdministrator)
+    // The manifest already asks for elevation, but the runtime check keeps the failure explicit.
+    if (!applicationInfo.IsAdministrator)
     {
         Console.WriteLine("Administrator rights are required.");
         Environment.Exit(1);
     }
 
-    var engine = new UnlockerEngine();
-    var menu = new MenuLoop(appInfo, engine);
-    menu.Run();
+    var unlockerEngine = new UnlockerEngine();
+    var menuLoop = new MenuLoop(applicationInfo, unlockerEngine);
+    menuLoop.Run();
 }
-catch (Exception ex)
+catch (Exception exception)
 {
     Console.WriteLine();
     ConsoleHelpers.WriteError("Fatal error.");
-    Console.WriteLine(ex);
+    Console.WriteLine(exception);
     ConsoleHelpers.Pause("Press any key to exit...");
 }

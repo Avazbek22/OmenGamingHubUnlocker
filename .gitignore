@@ -1,0 +1,28 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Aa]rtifacts/
+TestResults/
+
+# IDE settings
+.idea/
+.vs/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+_ReSharper*/
+*.ReSharper
+
+# .NET tooling
+project.lock.json
+project.fragment.lock.json
+packages/
+
+# OS / local files
+.DS_Store
+Thumbs.db
+Desktop.ini

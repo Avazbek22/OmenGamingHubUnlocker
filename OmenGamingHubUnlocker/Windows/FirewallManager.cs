@@ -1,24 +1,25 @@
-﻿using System.Text;
-using OmenGamingHubUnlocker.Core;
-
 namespace OmenGamingHubUnlocker.Windows;
 
+/// <summary>
+/// Encapsulates firewall rule discovery and block-rule management for OMEN binaries.
+/// </summary>
 public static class FirewallManager
 {
     public static (bool ok, string details) CheckCapability()
     {
         try
         {
-            var t = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
-            if (t is null) return (false, "HNetCfg.FwPolicy2 COM not available.");
+            var firewallPolicyType = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
+            if (firewallPolicyType is null)
+                return (false, "HNetCfg.FwPolicy2 COM not available.");
 
-            dynamic policy = Activator.CreateInstance(t)!;
-            _ = policy.Rules;
+            dynamic firewallPolicy = Activator.CreateInstance(firewallPolicyType)!;
+            _ = firewallPolicy.Rules;
             return (true, "COM access ok.");
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            return (false, ex.Message);
+            return (false, exception.Message);
         }
     }
 
@@ -26,21 +27,22 @@ public static class FirewallManager
     {
         try
         {
-            var policyType = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
-            if (policyType is null) return 0;
+            var firewallPolicyType = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
+            if (firewallPolicyType is null)
+                return 0;
 
-            dynamic policy = Activator.CreateInstance(policyType)!;
-            dynamic rules = policy.Rules;
+            dynamic firewallPolicy = Activator.CreateInstance(firewallPolicyType)!;
+            dynamic firewallRules = firewallPolicy.Rules;
 
-            int count = 0;
-            foreach (dynamic r in (System.Collections.IEnumerable)rules)
+            var matchingRuleCount = 0;
+            foreach (dynamic firewallRule in (System.Collections.IEnumerable)firewallRules)
             {
-                string name = r.Name;
-                if (name.StartsWith(prefix + " - ", StringComparison.OrdinalIgnoreCase))
-                    count++;
+                string ruleName = firewallRule.Name;
+                if (ruleName.StartsWith(prefix + " - ", StringComparison.OrdinalIgnoreCase))
+                    matchingRuleCount++;
             }
 
-            return count;
+            return matchingRuleCount;
         }
         catch
         {
@@ -48,298 +50,232 @@ public static class FirewallManager
         }
     }
 
-    /// <summary>
-    /// Finds candidate executables:
-    /// - AppX OMEN packages via PowerShell Get-AppxPackage (robust, no SDK contracts needed)
-    /// - Classic Program Files locations (fallback/additional)
-    /// </summary>
     public static HashSet<string> DiscoverCandidateExecutables()
     {
-        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var discoveredExecutables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // 1) AppX packages via PowerShell (no WinRT dependency)
         try
         {
-            var locations = TryGetAppxInstallLocationsViaPowerShell();
-            foreach (var loc in locations)
-                TryScanExe(loc, set);
+            var installLocations = AppxPackageManager
+                .QueryPackages(OmenTargets.AppxFilters)
+                .Select(package => package.InstallLocation)
+                .Where(location => !string.IsNullOrWhiteSpace(location))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var installLocation in installLocations)
+                TryScanExecutables(installLocation, discoveredExecutables);
         }
         catch
         {
-            // keep non-fatal; continue with classic dirs
+            // AppX discovery is optional; classic locations are still scanned below.
         }
 
-        // 2) Classic dirs (fallback / additional)
-        var pf = WindowsPaths.ProgramFiles;
-        var pf86 = WindowsPaths.ProgramFilesX86;
+        var programFilesPath = WindowsPaths.ProgramFiles;
+        var programFilesX86Path = WindowsPaths.ProgramFilesX86;
 
-        foreach (var rel in OmenTargets.ExtraExeDirsRelative)
+        foreach (var relativeDirectory in OmenTargets.ExtraExeDirsRelative)
         {
-            TryScanExe(Path.Combine(pf, rel), set);
+            TryScanExecutables(Path.Combine(programFilesPath, relativeDirectory), discoveredExecutables);
 
-            if (!string.Equals(pf, pf86, StringComparison.OrdinalIgnoreCase))
-                TryScanExe(Path.Combine(pf86, rel), set);
+            if (!string.Equals(programFilesPath, programFilesX86Path, StringComparison.OrdinalIgnoreCase))
+                TryScanExecutables(Path.Combine(programFilesX86Path, relativeDirectory), discoveredExecutables);
         }
 
-        return set;
+        return discoveredExecutables;
     }
 
     public static List<OperationLine> ActivateFirewallBlock(string prefix, bool dryRun)
     {
-        var lines = new List<OperationLine>();
+        var operationLines = new List<OperationLine>();
 
-        // remove old prefix rules
-        lines.AddRange(RemoveByPrefix(prefix, dryRun));
+        operationLines.AddRange(RemoveRulesByPrefix(prefix, dryRun));
 
-        // create new rules
-        var exes = DiscoverCandidateExecutables();
-        if (exes.Count == 0)
+        var candidateExecutables = DiscoverCandidateExecutables();
+        if (candidateExecutables.Count == 0)
         {
-            lines.Add(new OperationLine { Level = "WARN", Text = "Firewall: no executables discovered. No rules created." });
-            return lines;
+            operationLines.Add(new OperationLine { Level = "WARN", Text = "Firewall: no executables discovered. No rules created." });
+            return operationLines;
         }
 
-        foreach (var exe in exes.OrderBy(x => x))
+        foreach (var executablePath in candidateExecutables.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
         {
-            var file = Path.GetFileName(exe);
-            var ruleName = $"{prefix} - {file}";
+            var executableName = Path.GetFileName(executablePath);
+            var ruleName = $"{prefix} - {executableName}";
 
             if (dryRun)
             {
-                lines.Add(new OperationLine { Level = "OK", Text = $"Firewall: would block outbound: {file}" });
+                operationLines.Add(new OperationLine { Level = "OK", Text = $"Firewall: would block outbound: {executableName}" });
                 continue;
             }
 
-            var created = TryAddOutboundBlockRuleCom(ruleName, exe, out var err);
-            if (created)
+            var comRuleCreated = TryAddOutboundBlockRuleCom(ruleName, executablePath, out var comError);
+            if (comRuleCreated)
             {
-                lines.Add(new OperationLine { Level = "OK", Text = $"Firewall: created block rule: {ruleName}" });
+                operationLines.Add(new OperationLine { Level = "OK", Text = $"Firewall: created block rule: {ruleName}" });
                 continue;
             }
 
-            // Fallback: PowerShell New-NetFirewallRule
-            var psOk = TryAddOutboundBlockRulePowerShell(ruleName, exe, out var psErr);
-
-            lines.Add(new OperationLine
+            var powerShellRuleCreated = TryAddOutboundBlockRulePowerShell(ruleName, executablePath, out var powerShellError);
+            operationLines.Add(new OperationLine
             {
-                Level = psOk ? "WARN" : "ERR",
-                Text = psOk
-                    ? $"Firewall: COM failed, PowerShell fallback applied for {file}."
-                    : $"Firewall: failed to create rule for {file}. COM error: {err}. PS error: {psErr}"
+                Level = powerShellRuleCreated ? "WARN" : "ERR",
+                Text = powerShellRuleCreated
+                    ? $"Firewall: COM failed, PowerShell fallback applied for {executableName}."
+                    : $"Firewall: failed to create rule for {executableName}. COM error: {comError}. PS error: {powerShellError}"
             });
         }
 
-        return lines;
+        return operationLines;
     }
 
     public static List<OperationLine> DisableFirewallBlock(string prefix, bool dryRun)
-        => RemoveByPrefix(prefix, dryRun);
+        => RemoveRulesByPrefix(prefix, dryRun);
 
-    private static List<OperationLine> RemoveByPrefix(string prefix, bool dryRun)
+    private static List<OperationLine> RemoveRulesByPrefix(string prefix, bool dryRun)
     {
-        var lines = new List<OperationLine>();
+        var operationLines = new List<OperationLine>();
 
-        // Try COM removal first (iterate all rules, remove those with prefix)
         try
         {
-            var policyType = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
-            if (policyType is not null)
+            var firewallPolicyType = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
+            if (firewallPolicyType is not null)
             {
-                dynamic policy = Activator.CreateInstance(policyType)!;
-                dynamic rules = policy.Rules;
+                dynamic firewallPolicy = Activator.CreateInstance(firewallPolicyType)!;
+                dynamic firewallRules = firewallPolicy.Rules;
 
-                var names = new List<string>();
-                foreach (dynamic r in (System.Collections.IEnumerable)rules)
+                var matchingRuleNames = new List<string>();
+                foreach (dynamic firewallRule in (System.Collections.IEnumerable)firewallRules)
                 {
-                    string name = r.Name;
-                    if (name.StartsWith(prefix + " - ", StringComparison.OrdinalIgnoreCase))
-                        names.Add(name);
+                    string ruleName = firewallRule.Name;
+                    if (ruleName.StartsWith(prefix + " - ", StringComparison.OrdinalIgnoreCase))
+                        matchingRuleNames.Add(ruleName);
                 }
 
-                if (names.Count == 0)
+                if (matchingRuleNames.Count == 0)
                 {
-                    lines.Add(new OperationLine { Level = "INFO", Text = $"Firewall: no rules found with prefix '{prefix} - '." });
-                    return lines;
+                    operationLines.Add(new OperationLine { Level = "INFO", Text = $"Firewall: no rules found with prefix '{prefix} - '." });
+                    return operationLines;
                 }
 
-                foreach (var n in names)
+                foreach (var ruleName in matchingRuleNames)
                 {
                     if (dryRun)
                     {
-                        lines.Add(new OperationLine { Level = "OK", Text = $"Firewall: would remove rule: {n}" });
+                        operationLines.Add(new OperationLine { Level = "OK", Text = $"Firewall: would remove rule: {ruleName}" });
                         continue;
                     }
 
                     try
                     {
-                        rules.Remove(n);
-                        lines.Add(new OperationLine { Level = "OK", Text = $"Firewall: removed rule: {n}" });
+                        firewallRules.Remove(ruleName);
+                        operationLines.Add(new OperationLine { Level = "OK", Text = $"Firewall: removed rule: {ruleName}" });
                     }
-                    catch (Exception ex)
+                    catch (Exception exception)
                     {
-                        lines.Add(new OperationLine { Level = "WARN", Text = $"Firewall: failed to remove {n}: {ex.Message}" });
+                        operationLines.Add(new OperationLine { Level = "WARN", Text = $"Firewall: failed to remove {ruleName}: {exception.Message}" });
                     }
                 }
 
-                return lines;
+                return operationLines;
             }
         }
         catch
         {
-            // fallback below
+            // COM removal failed; the PowerShell fallback below covers the same intent.
         }
 
-        // Fallback: PowerShell remove by DisplayName
         if (dryRun)
         {
-            lines.Add(new OperationLine { Level = "OK", Text = $"Firewall: would remove rules by PowerShell filter: {prefix} - *" });
-            return lines;
+            operationLines.Add(new OperationLine { Level = "OK", Text = $"Firewall: would remove rules by PowerShell filter: {prefix} - *" });
+            return operationLines;
         }
 
-        var cmd = $"Get-NetFirewallRule -DisplayName \"{prefix} - *\" -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue";
-        var ok = PowerShellRunner.TryRun("powershell.exe", $"-NoProfile -ExecutionPolicy Bypass -Command \"{cmd}\"", out _, out var err2);
+        var powerShellCommand = $"Get-NetFirewallRule -DisplayName \"{prefix} - *\" -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue";
+        var commandSucceeded = PowerShellRunner.TryRun(
+            "powershell.exe",
+            $"-NoProfile -ExecutionPolicy Bypass -Command \"{powerShellCommand}\"",
+            out _,
+            out var commandError,
+            30_000);
 
-        lines.Add(new OperationLine
+        operationLines.Add(new OperationLine
         {
-            Level = ok ? "OK" : "ERR",
-            Text = ok
+            Level = commandSucceeded ? "OK" : "ERR",
+            Text = commandSucceeded
                 ? $"Firewall: rules removed via PowerShell filter: {prefix} - *"
-                : $"Firewall: PowerShell fallback failed: {err2}"
+                : $"Firewall: PowerShell fallback failed: {commandError}"
         });
 
-        return lines;
+        return operationLines;
     }
 
-    private static bool TryAddOutboundBlockRuleCom(string ruleName, string exePath, out string error)
+    private static bool TryAddOutboundBlockRuleCom(string ruleName, string executablePath, out string error)
     {
         try
         {
-            var ruleType = Type.GetTypeFromProgID("HNetCfg.FWRule");
-            var policyType = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
+            var firewallRuleType = Type.GetTypeFromProgID("HNetCfg.FWRule");
+            var firewallPolicyType = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
 
-            if (ruleType is null || policyType is null)
+            if (firewallRuleType is null || firewallPolicyType is null)
             {
                 error = "Firewall COM types not available.";
                 return false;
             }
 
-            dynamic rule = Activator.CreateInstance(ruleType)!;
+            dynamic firewallRule = Activator.CreateInstance(firewallRuleType)!;
 
-            rule.Name = ruleName; // Display name in UI
-            rule.Description = "OmenGamingHubUnlocker";
-            rule.ApplicationName = exePath;
+            firewallRule.Name = ruleName;
+            firewallRule.Description = "OmenGamingHubUnlocker";
+            firewallRule.ApplicationName = executablePath;
+            firewallRule.Action = 0;
+            firewallRule.Direction = 2;
+            firewallRule.Enabled = true;
+            firewallRule.InterfaceTypes = "All";
+            firewallRule.Profiles = int.MaxValue;
 
-            rule.Action = 0;      // BLOCK
-            rule.Direction = 2;   // OUT
-            rule.Enabled = true;
-            rule.InterfaceTypes = "All";
-            rule.Profiles = int.MaxValue;
+            dynamic firewallPolicy = Activator.CreateInstance(firewallPolicyType)!;
+            dynamic firewallRules = firewallPolicy.Rules;
+            firewallRules.Add(firewallRule);
 
-            dynamic policy = Activator.CreateInstance(policyType)!;
-            dynamic rules = policy.Rules;
-            rules.Add(rule);
-
-            error = "";
+            error = string.Empty;
             return true;
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            error = ex.Message;
+            error = exception.Message;
             return false;
         }
     }
 
-    private static bool TryAddOutboundBlockRulePowerShell(string ruleName, string exePath, out string error)
+    private static bool TryAddOutboundBlockRulePowerShell(string ruleName, string executablePath, out string error)
     {
-        var cmd = $"New-NetFirewallRule -DisplayName \"{ruleName}\" -Direction Outbound -Program \"{exePath}\" -Action Block -Profile Any -Enabled True -ErrorAction Stop | Out-Null";
-        var ok = PowerShellRunner.TryRun("powershell.exe", $"-NoProfile -ExecutionPolicy Bypass -Command \"{cmd}\"", out _, out var err);
-        error = err;
-        return ok;
+        var powerShellCommand =
+            $"New-NetFirewallRule -DisplayName \"{ruleName}\" -Direction Outbound -Program \"{executablePath}\" -Action Block -Profile Any -Enabled True -ErrorAction Stop | Out-Null";
+
+        var commandSucceeded = PowerShellRunner.TryRun(
+            "powershell.exe",
+            $"-NoProfile -ExecutionPolicy Bypass -Command \"{powerShellCommand}\"",
+            out _,
+            out var commandError,
+            30_000);
+
+        error = commandError;
+        return commandSucceeded;
     }
 
-    private static void TryScanExe(string dir, HashSet<string> set)
+    private static void TryScanExecutables(string directoryPath, HashSet<string> destination)
     {
         try
         {
-            if (!Directory.Exists(dir))
+            if (!Directory.Exists(directoryPath))
                 return;
 
-            foreach (var exe in Directory.EnumerateFiles(dir, "*.exe", SearchOption.AllDirectories))
-                set.Add(exe);
+            foreach (var executablePath in Directory.EnumerateFiles(directoryPath, "*.exe", SearchOption.AllDirectories))
+                destination.Add(executablePath);
         }
         catch
         {
-            // keep non-fatal
+            // Discovery must continue even if one directory becomes inaccessible during enumeration.
         }
-    }
-
-    private static List<string> TryGetAppxInstallLocationsViaPowerShell()
-    {
-        // Output lines:
-        // Name|Family|InstallLocation|DisplayName
-        const string ps = """
-$ErrorActionPreference = 'SilentlyContinue'
-Get-AppxPackage | ForEach-Object {
-  $n = $_.Name
-  $f = $_.PackageFamilyName
-  $l = $_.InstallLocation
-  $d = $_.DisplayName
-  if ($null -ne $l -and $l -ne '') { "$n|$f|$l|$d" }
-}
-""";
-
-        var ok = TryRunPowerShellEncoded(ps, out var stdout, out _);
-        if (!ok || string.IsNullOrWhiteSpace(stdout))
-            return new List<string>();
-
-        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var line in stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-        {
-            var parts = line.Split('|');
-            if (parts.Length < 3)
-                continue;
-
-            var name = parts[0].Trim();
-            var family = parts[1].Trim();
-            var loc = parts[2].Trim();
-            var display = parts.Length >= 4 ? parts[3].Trim() : "";
-
-            if (string.IsNullOrWhiteSpace(loc) || !Directory.Exists(loc))
-                continue;
-
-            var match = OmenTargets.AppxFilters.Any(p =>
-                WildMatch(name, p) ||
-                WildMatch(family, p) ||
-                WildMatch(display, p));
-
-            if (!match)
-                continue;
-
-            result.Add(loc);
-        }
-
-        return result.ToList();
-    }
-
-    private static bool TryRunPowerShellEncoded(string script, out string stdout, out string stderr)
-    {
-        var bytes = Encoding.Unicode.GetBytes(script);
-        var b64 = Convert.ToBase64String(bytes);
-
-        return PowerShellRunner.TryRun(
-            "powershell.exe",
-            $"-NoProfile -ExecutionPolicy Bypass -EncodedCommand {b64}",
-            out stdout,
-            out stderr);
-    }
-
-    private static bool WildMatch(string input, string pattern)
-    {
-        var regex = "^" + System.Text.RegularExpressions.Regex.Escape(pattern)
-            .Replace("\\*", ".*")
-            .Replace("\\?", ".") + "$";
-
-        return System.Text.RegularExpressions.Regex.IsMatch(input ?? "", regex, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 }
