@@ -18,7 +18,7 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
             Console.WriteLine("[2] Dry run");
             Console.WriteLine("[3] Activate scripts");
             Console.WriteLine("[4] Disable scripts");
-            Console.WriteLine("[5] Reset OMEN app and reapply taming");
+            Console.WriteLine("[5] Reset Omen Gaming Hub & Activate scripts");
             Console.WriteLine("[6] About");
             Console.WriteLine("[7] Exit");
             Console.WriteLine();
