@@ -4,6 +4,9 @@ namespace OmenGamingHubUnlocker.Core;
 
 public sealed class UnlockerEngine
 {
+    private const int ActivationStabilizationAttempts = 2;
+    private const int ActivationStabilizationDelayMs = 3_000;
+
     private readonly UnlockerStateStore _stateStore = new();
 
     public StatusReport GetStatusReport()
@@ -11,7 +14,18 @@ public sealed class UnlockerEngine
         var report = new StatusReport();
 
         foreach (var process in ProcessManager.FindMatchingProcesses(OmenTargets.ProcessNamePatterns))
-            report.RunningProcesses.Add($"{process.ProcessName} (PID {process.Id})");
+        {
+            var label = $"{process.ProcessName} (PID {process.Id})";
+            report.RunningProcesses.Add(label);
+            report.Snapshots.Add(new StatusSnapshot
+            {
+                Area = "Processes",
+                Item = label,
+                Current = "Running",
+                Expected = "Not running while tamed",
+                Result = "WARN"
+            });
+        }
 
         var services = ServiceManager.QueryServices(OmenTargets.ServicePatterns);
         report.ServicesMatched = services.Count;
@@ -161,6 +175,7 @@ public sealed class UnlockerEngine
     {
         var report = OperationReport.Ok("Activation completed.");
         ExecuteActivationFlow(report, options, "Activate scripts", includeProcessTermination: true);
+        RunActivationStabilization(report, options, "Activation stabilization", killProcesses: options.TryKillProcesses);
         FinalizeReport(report, "Activation finished with errors.");
         return report;
     }
@@ -197,7 +212,9 @@ public sealed class UnlockerEngine
             report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Reset: unexpected failure - {ex.Message}" });
         }
 
+        WaitForPostResetSettle(report, options);
         ExecuteActivationFlow(report, options, "Refresh taming after reset", includeProcessTermination: false);
+        RunActivationStabilization(report, options, "Post-reset stabilization", killProcesses: true);
         FinalizeReport(report, "Reset and reapply finished with errors.");
         return report;
     }
@@ -212,38 +229,7 @@ public sealed class UnlockerEngine
         if (includeProcessTermination)
             AddProcessTerminationLines(report, options);
 
-        try
-        {
-            var serviceTargets = plan.ServicesToManual
-                .Select(x => new ServiceStartModeTarget(x.Name, "Manual"));
-
-            report.Lines.AddRange(ServiceManager.ApplyStartModeTargets(serviceTargets, options.DryRun));
-        }
-        catch (Exception ex)
-        {
-            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Services step failed: {ex.Message}" });
-        }
-
-        try
-        {
-            var taskTargets = plan.TasksToDisable
-                .Select(x => new TaskEnableTarget(x.Path, false));
-
-            report.Lines.AddRange(TaskSchedulerManager.ApplyEnabledTargets(taskTargets, options.DryRun));
-        }
-        catch (Exception ex)
-        {
-            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Tasks step failed: {ex.Message}" });
-        }
-
-        try
-        {
-            report.Lines.AddRange(RegistryRunManager.RemoveEntries(plan.RunEntriesToRemove, options.DryRun));
-        }
-        catch (Exception ex)
-        {
-            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Registry Run step failed: {ex.Message}" });
-        }
+        ApplyActivationPlan(report, plan, options);
 
         ApplyFirewall(report, options, activate: true);
         ApplyHosts(report, options, activate: true);
@@ -317,6 +303,105 @@ public sealed class UnlockerEngine
         catch (Exception ex)
         {
             report.Lines.Add(new OperationLine { Level = "ERR", Text = $"State backup failed: {ex.Message}" });
+        }
+    }
+
+    private void RunActivationStabilization(OperationReport report, UnlockerOptions options, string title, bool killProcesses)
+    {
+        if (options.DryRun)
+        {
+            report.Lines.Add(new OperationLine { Level = "INFO", Text = $"{title}: skipped in dry run." });
+            return;
+        }
+
+        for (var attempt = 1; attempt <= ActivationStabilizationAttempts; attempt++)
+        {
+            Thread.Sleep(ActivationStabilizationDelayMs);
+
+            var runningProcesses = ProcessManager.FindMatchingProcesses(OmenTargets.ProcessNamePatterns);
+            var plan = BuildActivationPlan();
+
+            var hasPendingChanges =
+                runningProcesses.Count > 0 ||
+                plan.ServicesToManual.Count > 0 ||
+                plan.TasksToDisable.Count > 0 ||
+                plan.RunEntriesToRemove.Count > 0;
+
+            if (!hasPendingChanges)
+            {
+                report.Lines.Add(new OperationLine
+                {
+                    Level = "INFO",
+                    Text = $"{title}: system is stable after sweep {attempt - 1}."
+                });
+                return;
+            }
+
+            report.Lines.Add(new OperationLine
+            {
+                Level = "INFO",
+                Text = $"{title}: sweep {attempt} found {runningProcesses.Count} process(es), {plan.ServicesToManual.Count} service change(s), {plan.TasksToDisable.Count} task change(s), {plan.RunEntriesToRemove.Count} Run entry change(s)."
+            });
+
+            PersistActivationBackups(plan, options, report);
+
+            if (killProcesses)
+                AddProcessTerminationLines(report, options);
+
+            ApplyActivationPlan(report, plan, options);
+        }
+    }
+
+    private static void WaitForPostResetSettle(OperationReport report, UnlockerOptions options)
+    {
+        if (options.DryRun)
+        {
+            report.Lines.Add(new OperationLine { Level = "INFO", Text = "Post-reset settle wait: skipped in dry run." });
+            return;
+        }
+
+        report.Lines.Add(new OperationLine
+        {
+            Level = "INFO",
+            Text = $"Waiting {ActivationStabilizationDelayMs / 1000} second(s) for OMEN post-reset registration to settle."
+        });
+
+        Thread.Sleep(ActivationStabilizationDelayMs);
+    }
+
+    private static void ApplyActivationPlan(OperationReport report, ActivationPlan plan, UnlockerOptions options)
+    {
+        try
+        {
+            var serviceTargets = plan.ServicesToManual
+                .Select(x => new ServiceStartModeTarget(x.Name, "Manual"));
+
+            report.Lines.AddRange(ServiceManager.ApplyStartModeTargets(serviceTargets, options.DryRun));
+        }
+        catch (Exception ex)
+        {
+            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Services step failed: {ex.Message}" });
+        }
+
+        try
+        {
+            var taskTargets = plan.TasksToDisable
+                .Select(x => new TaskEnableTarget(x.Path, false));
+
+            report.Lines.AddRange(TaskSchedulerManager.ApplyEnabledTargets(taskTargets, options.DryRun));
+        }
+        catch (Exception ex)
+        {
+            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Tasks step failed: {ex.Message}" });
+        }
+
+        try
+        {
+            report.Lines.AddRange(RegistryRunManager.RemoveEntries(plan.RunEntriesToRemove, options.DryRun));
+        }
+        catch (Exception ex)
+        {
+            report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Registry Run step failed: {ex.Message}" });
         }
     }
 

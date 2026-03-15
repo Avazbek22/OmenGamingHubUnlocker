@@ -7,10 +7,15 @@ public static class ProcessManager
     public static List<Process> FindMatchingProcesses(string[] patterns)
     {
         var list = new List<Process>();
+        var currentProcessId = Environment.ProcessId;
+
         foreach (var p in Process.GetProcesses())
         {
             try
             {
+                if (p.Id == currentProcessId)
+                    continue;
+
                 var name = p.ProcessName;
                 if (patterns.Any(pt => WildcardMatch(name, pt)))
                     list.Add(p);
