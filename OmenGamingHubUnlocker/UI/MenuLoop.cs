@@ -5,8 +5,6 @@ namespace OmenGamingHubUnlocker.UI;
 /// </summary>
 public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
 {
-    private const string RepoUrl = "https://github.com/Avazbek22/OmenGamingHubUnlocker";
-
     public void Run()
     {
         while (true)
@@ -19,8 +17,9 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
             Console.WriteLine("[3] Activate scripts");
             Console.WriteLine("[4] Disable scripts");
             Console.WriteLine("[5] Reset Omen Gaming Hub & Activate scripts");
-            Console.WriteLine("[6] About");
-            Console.WriteLine("[7] Exit");
+            Console.WriteLine("[6] Help");
+            Console.WriteLine("[7] About");
+            Console.WriteLine("[8] Exit");
             Console.WriteLine();
 
             var selectedAction = ConsoleHelpers.ReadMenuChoice();
@@ -43,9 +42,12 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
                     RunResetAndReapply();
                     break;
                 case "6":
-                    ShowAbout();
+                    ShowHelp();
                     break;
                 case "7":
+                    ShowAbout();
+                    break;
+                case "8":
                     return;
                 default:
                     ConsoleHelpers.WriteWarning("Invalid choice.");
@@ -201,32 +203,17 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
     }
 
     private void ShowAbout()
+        => ShowDocumentationScreen("About", DocumentationDocument.About);
+
+    private void ShowHelp()
+        => ShowDocumentationScreen("Help", DocumentationDocument.Help);
+
+    private static void ShowDocumentationScreen(string title, DocumentationDocument document)
     {
         ConsoleHelpers.TryClearScreen();
-        RenderScreenHeader("About");
+        RenderScreenHeader(title);
 
-        ConsoleHelpers.PrintLinesAnimated(new[]
-        {
-            "OmenGamingHubUnlocker is a small helper tool for HP OMEN laptops/desktops.",
-            string.Empty,
-            "Purpose:",
-            " - Keep OMEN Gaming Hub installed, but prevent it from auto-starting and running unwanted background activity.",
-            string.Empty,
-            "What it can do:",
-            " - Tame auto-start behavior (services / scheduled tasks / Run entries)",
-            " - Block OMEN executables outbound traffic via Windows Firewall",
-            " - Block known OMEN endpoints via hosts file",
-            " - Reset the OMEN AppX package and immediately re-apply taming",
-            string.Empty,
-            "Author:",
-            " - Avazbek22",
-            string.Empty,
-            "GitHub:",
-            $" - {RepoUrl}",
-            string.Empty,
-            "License:",
-            " - MIT"
-        });
+        ConsoleHelpers.PrintLinesAnimated(DocumentationProvider.GetLines(document));
 
         ConsoleHelpers.Pause();
     }

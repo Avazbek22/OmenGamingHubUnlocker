@@ -1,0 +1,30 @@
+This tool keeps OMEN Gaming Hub installed while reducing its startup and network activity.
+
+Quick start:
+ - Run Dry run first if you want a non-destructive preview.
+ - Use Activate scripts to apply the standard tame profile.
+ - Use Reset OMEN app if OMEN updated itself, broke your bypass, or got stuck.
+ - Use Disable scripts only when you want to restore the previously backed-up startup state.
+
+What each action does:
+ - Check status: shows the current process, service, task, firewall, hosts, and Run-entry state.
+ - Dry run: checks capabilities, discovers OMEN targets, and predicts what activation would change.
+ - Activate scripts: stops OMEN from auto-starting, applies firewall rules, and adds hosts blocks.
+ - Disable scripts: removes this tool's firewall and hosts changes and restores saved startup state.
+ - Reset OMEN app & Activate scripts: performs the Windows app reset and immediately re-applies taming.
+
+Important notes:
+ - This tool does not uninstall OMEN Gaming Hub.
+ - The reset action is equivalent to the Windows Settings reset for the OMEN app package.
+ - Disable can restore only the service, task, and Run-entry state that this tool backed up earlier.
+ - Firewall and hosts taming are re-created during activation and removed during disable.
+ - Administrator rights are required for meaningful results.
+
+Recommended workflow after an OMEN update:
+ - Start this tool as Administrator.
+ - Run Reset OMEN app & Activate scripts.
+ - Wait for the final snapshot and confirm that firewall and hosts entries are present.
+ - Launch OMEN only after the tame profile has been re-applied.
+
+Project page:
+ - https://github.com/Avazbek22/OmenGamingHubUnlocker
