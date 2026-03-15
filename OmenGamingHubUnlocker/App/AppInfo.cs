@@ -1,11 +1,18 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
 
 namespace OmenGamingHubUnlocker.App;
 
+/// <summary>
+/// Captures immutable runtime metadata that is displayed in the UI and reused across the application.
+/// </summary>
 public sealed class AppInfo
 {
+    private const string WindowsVersionRegistryKey = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
+    private const string Windows10Label = "Windows 10";
+    private const string Windows11Label = "Windows 11";
+
     public const string AppName = "OmenGamingHubUnlocker";
 
     public string ExePath { get; }
@@ -14,7 +21,12 @@ public sealed class AppInfo
     public string FrameworkDescription { get; }
     public string Version { get; }
 
-    private AppInfo(string exePath, bool isAdministrator, string osDisplayName, string frameworkDescription, string version)
+    private AppInfo(
+        string exePath,
+        bool isAdministrator,
+        string osDisplayName,
+        string frameworkDescription,
+        string version)
     {
         ExePath = exePath;
         IsAdministrator = isAdministrator;
@@ -23,80 +35,97 @@ public sealed class AppInfo
         Version = version;
     }
 
+    /// <summary>
+    /// Builds a single immutable snapshot of environment details for the current process.
+    /// </summary>
     public static AppInfo Create()
     {
-        var exePath = Process.GetCurrentProcess().MainModule?.FileName
-                      ?? Environment.ProcessPath
-                      ?? $"{AppName}.exe";
+        var executablePath = Process.GetCurrentProcess().MainModule?.FileName
+                             ?? Environment.ProcessPath
+                             ?? $"{AppName}.exe";
 
-        var isAdmin = AdminHelper.IsAdministrator();
-        var osDisplayName = BuildWindowsDisplayName();
+        var isAdministrator = AdminHelper.IsAdministrator();
+        var operatingSystemName = BuildWindowsDisplayName();
+        var frameworkDescription = RuntimeInformation.FrameworkDescription.Trim();
+        var version = typeof(AppInfo).Assembly.GetName().Version?.ToString() ?? "1.0.0";
 
-        var fw = RuntimeInformation.FrameworkDescription.Trim();
-        var ver = typeof(AppInfo).Assembly.GetName().Version?.ToString() ?? "1.0.0";
-
-        return new AppInfo(exePath, isAdmin, osDisplayName, fw, ver);
+        return new AppInfo(
+            executablePath,
+            isAdministrator,
+            operatingSystemName,
+            frameworkDescription,
+            version);
     }
 
     private static string BuildWindowsDisplayName()
     {
-        var (major, minor, build) = TryGetRealNtVersion() ?? (0u, 0u, 0u);
-
-        var (displayVersion, ubrFromReg) = ReadDisplayVersionAndUbr();
-        var ubr = ubrFromReg;
+        var (majorVersion, minorVersion, buildNumber) = TryGetRealNtVersion() ?? (0u, 0u, 0u);
+        var (displayVersion, updateBuildRevision) = ReadDisplayVersionAndBuildRevision();
 
         var brandedName = TryGetBrandingString("%WINDOWS_LONG%");
-        var regProductName = ReadRegistryString(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion", "ProductName");
+        var registryProductName = ReadRegistryString(WindowsVersionRegistryKey, "ProductName");
+        var operatingSystemName = FirstNonEmpty(brandedName, registryProductName, "Windows").Trim();
 
-        var name = FirstNonEmpty(brandedName, regProductName, "Windows");
+        if (IsLikelyWindows11(majorVersion, minorVersion, buildNumber) &&
+            operatingSystemName.Contains(Windows10Label, StringComparison.OrdinalIgnoreCase))
+        {
+            operatingSystemName = ReplaceWindows10WithWindows11(operatingSystemName);
+        }
 
-        if (IsLikelyWindows11(major, minor, build) && name.Contains("Windows 10", StringComparison.OrdinalIgnoreCase))
-            name = ReplaceWindows10With11(name);
-
-        name = name.Trim();
-
-        var buildStr = build > 0
-            ? (ubr.HasValue ? $"Build {build}.{ubr.Value}" : $"Build {build}")
+        var buildLabel = buildNumber > 0
+            ? updateBuildRevision.HasValue
+                ? $"Build {buildNumber}.{updateBuildRevision.Value}"
+                : $"Build {buildNumber}"
             : "Build ?";
 
-        var dv = string.IsNullOrWhiteSpace(displayVersion) ? null : displayVersion.Trim();
-        var includeDv = dv is not null && !name.Contains(dv, StringComparison.OrdinalIgnoreCase);
+        var normalizedDisplayVersion = string.IsNullOrWhiteSpace(displayVersion)
+            ? null
+            : displayVersion.Trim();
 
-        return includeDv
-            ? $"{name} {dv} ({buildStr})"
-            : $"{name} ({buildStr})";
+        var shouldAppendDisplayVersion = normalizedDisplayVersion is not null &&
+                                         !operatingSystemName.Contains(normalizedDisplayVersion, StringComparison.OrdinalIgnoreCase);
+
+        return shouldAppendDisplayVersion
+            ? $"{operatingSystemName} {normalizedDisplayVersion} ({buildLabel})"
+            : $"{operatingSystemName} ({buildLabel})";
     }
 
-    private static bool IsLikelyWindows11(uint major, uint minor, uint build)
-        => major == 10 && minor == 0 && build >= 22000;
+    private static bool IsLikelyWindows11(uint majorVersion, uint minorVersion, uint buildNumber)
+        => majorVersion == 10 && minorVersion == 0 && buildNumber >= 22000;
 
-    private static string ReplaceWindows10With11(string s)
+    private static string ReplaceWindows10WithWindows11(string displayName)
     {
-        var idx = s.IndexOf("Windows 10", StringComparison.OrdinalIgnoreCase);
-        if (idx < 0) return s;
+        var windows10Index = displayName.IndexOf(Windows10Label, StringComparison.OrdinalIgnoreCase);
+        if (windows10Index < 0)
+            return displayName;
 
-        var before = s[..idx];
-        var after = s[(idx + "Windows 10".Length)..];
-        return before + "Windows 11" + after;
+        var prefix = displayName[..windows10Index];
+        var suffix = displayName[(windows10Index + Windows10Label.Length)..];
+        return prefix + Windows11Label + suffix;
     }
 
-    private static (string? displayVersion, int? ubr) ReadDisplayVersionAndUbr()
+    private static (string? displayVersion, int? buildRevision) ReadDisplayVersionAndBuildRevision()
     {
-        var displayVersion = ReadRegistryString(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion", "DisplayVersion")
-                             ?? ReadRegistryString(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion", "ReleaseId");
+        var displayVersion = ReadRegistryString(WindowsVersionRegistryKey, "DisplayVersion")
+                             ?? ReadRegistryString(WindowsVersionRegistryKey, "ReleaseId");
 
-        int? ubr = null;
+        int? buildRevision = null;
+
         try
         {
             using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
-            using var key = baseKey.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion", writable: false);
-            var ubrObj = key?.GetValue("UBR");
-            if (ubrObj is int ubrInt)
-                ubr = ubrInt;
-        }
-        catch { }
+            using var versionKey = baseKey.OpenSubKey(WindowsVersionRegistryKey, writable: false);
+            var buildRevisionValue = versionKey?.GetValue("UBR");
 
-        return (displayVersion, ubr);
+            if (buildRevisionValue is int revision)
+                buildRevision = revision;
+        }
+        catch
+        {
+            // Display version is still useful even when UBR is unavailable.
+        }
+
+        return (displayVersion, buildRevision);
     }
 
     private static string? ReadRegistryString(string subKeyPath, string valueName)
@@ -104,8 +133,8 @@ public sealed class AppInfo
         try
         {
             using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
-            using var key = baseKey.OpenSubKey(subKeyPath, writable: false);
-            return key?.GetValue(valueName) as string;
+            using var registryKey = baseKey.OpenSubKey(subKeyPath, writable: false);
+            return registryKey?.GetValue(valueName) as string;
         }
         catch
         {
@@ -113,18 +142,20 @@ public sealed class AppInfo
         }
     }
 
-    private static (uint major, uint minor, uint build)? TryGetRealNtVersion()
+    private static (uint majorVersion, uint minorVersion, uint buildNumber)? TryGetRealNtVersion()
     {
         try
         {
-            var info = new RTL_OSVERSIONINFOEXW();
-            info.dwOSVersionInfoSize = (uint)Marshal.SizeOf<RTL_OSVERSIONINFOEXW>();
+            var versionInfo = new RtlOsVersionInfoExw
+            {
+                dwOSVersionInfoSize = (uint)Marshal.SizeOf<RtlOsVersionInfoExw>()
+            };
 
-            var status = RtlGetVersion(ref info);
+            var status = RtlGetVersion(ref versionInfo);
             if (status != 0)
                 return null;
 
-            return (info.dwMajorVersion, info.dwMinorVersion, info.dwBuildNumber);
+            return (versionInfo.dwMajorVersion, versionInfo.dwMinorVersion, versionInfo.dwBuildNumber);
         }
         catch
         {
@@ -134,30 +165,36 @@ public sealed class AppInfo
 
     private static string? TryGetBrandingString(string token)
     {
+        IntPtr brandingPointer = IntPtr.Zero;
+
         try
         {
-            var ptr = BrandingFormatString(token);
-            if (ptr == IntPtr.Zero)
+            brandingPointer = BrandingFormatString(token);
+            if (brandingPointer == IntPtr.Zero)
                 return null;
 
-            var s = Marshal.PtrToStringUni(ptr)?.Trim();
-            GlobalFree(ptr);
-            return string.IsNullOrWhiteSpace(s) ? null : s;
+            var brandingValue = Marshal.PtrToStringUni(brandingPointer)?.Trim();
+            return string.IsNullOrWhiteSpace(brandingValue) ? null : brandingValue;
         }
         catch
         {
             return null;
         }
+        finally
+        {
+            if (brandingPointer != IntPtr.Zero)
+                GlobalFree(brandingPointer);
+        }
     }
 
-    private static string FirstNonEmpty(params string?[] items)
-        => items.FirstOrDefault(s => !string.IsNullOrWhiteSpace(s)) ?? string.Empty;
+    private static string FirstNonEmpty(params string?[] values)
+        => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
 
     [DllImport("ntdll.dll", ExactSpelling = true)]
-    private static extern int RtlGetVersion(ref RTL_OSVERSIONINFOEXW lpVersionInformation);
+    private static extern int RtlGetVersion(ref RtlOsVersionInfoExw versionInformation);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct RTL_OSVERSIONINFOEXW
+    private struct RtlOsVersionInfoExw
     {
         public uint dwOSVersionInfoSize;
         public uint dwMajorVersion;
@@ -180,5 +217,5 @@ public sealed class AppInfo
     private static extern IntPtr BrandingFormatString(string format);
 
     [DllImport("kernel32.dll", ExactSpelling = true)]
-    private static extern IntPtr GlobalFree(IntPtr hMem);
+    private static extern IntPtr GlobalFree(IntPtr memoryHandle);
 }

@@ -3,10 +3,24 @@ using Microsoft.Win32;
 
 namespace OmenGamingHubUnlocker.Windows;
 
+/// <summary>
+/// Stores the original service, task, and Run-entry state so the app can restore what it changed.
+/// </summary>
 public sealed record ServiceBackup(string Name, string OriginalStartMode);
+
+/// <summary>
+/// Stores the original enabled flag of a scheduled task.
+/// </summary>
 public sealed record TaskBackup(string Path, bool OriginalEnabled);
+
+/// <summary>
+/// Stores the original value of a Run entry together with its registry location.
+/// </summary>
 public sealed record RunEntryBackup(RegistryHive Hive, RegistryView View, string Name, string Value);
 
+/// <summary>
+/// Serializable container for every persisted rollback artifact.
+/// </summary>
 public sealed class UnlockerState
 {
     public List<ServiceBackup> Services { get; init; } = [];
@@ -14,33 +28,36 @@ public sealed class UnlockerState
     public List<RunEntryBackup> RunEntries { get; init; } = [];
 }
 
+/// <summary>
+/// Persists and merges rollback data inside ProgramData so it survives multiple runs.
+/// </summary>
 public sealed class UnlockerStateStore
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         WriteIndented = true
     };
 
-    private readonly string _statePath;
+    private readonly string _stateFilePath;
 
     public UnlockerStateStore()
     {
-        var stateDir = Path.Combine(
+        var stateDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "OmenGamingHubUnlocker");
 
-        _statePath = Path.Combine(stateDir, "state.json");
+        _stateFilePath = Path.Combine(stateDirectory, "state.json");
     }
 
     public UnlockerState Load()
     {
         try
         {
-            if (!File.Exists(_statePath))
+            if (!File.Exists(_stateFilePath))
                 return new UnlockerState();
 
-            var json = File.ReadAllText(_statePath);
-            return JsonSerializer.Deserialize<UnlockerState>(json, JsonOptions) ?? new UnlockerState();
+            var json = File.ReadAllText(_stateFilePath);
+            return JsonSerializer.Deserialize<UnlockerState>(json, SerializerOptions) ?? new UnlockerState();
         }
         catch
         {
@@ -53,73 +70,79 @@ public sealed class UnlockerStateStore
         IEnumerable<TaskBackup> taskBackups,
         IEnumerable<RunEntryBackup> runEntryBackups)
     {
-        var state = Load();
+        var currentState = Load();
 
-        MergeServices(state.Services, serviceBackups);
-        MergeTasks(state.Tasks, taskBackups);
-        MergeRunEntries(state.RunEntries, runEntryBackups);
+        MergeServices(currentState.Services, serviceBackups);
+        MergeTasks(currentState.Tasks, taskBackups);
+        MergeRunEntries(currentState.RunEntries, runEntryBackups);
 
-        Save(state);
+        Save(currentState);
     }
 
     public void Clear()
     {
         try
         {
-            if (File.Exists(_statePath))
-                File.Delete(_statePath);
+            if (File.Exists(_stateFilePath))
+                File.Delete(_stateFilePath);
         }
         catch
         {
-            // Best-effort cleanup only.
+            // Failed cleanup should never block a successful disable flow.
         }
     }
 
     private void Save(UnlockerState state)
     {
-        var directory = Path.GetDirectoryName(_statePath);
-        if (string.IsNullOrWhiteSpace(directory))
+        var stateDirectory = Path.GetDirectoryName(_stateFilePath);
+        if (string.IsNullOrWhiteSpace(stateDirectory))
             throw new InvalidOperationException("State directory path is invalid.");
 
-        Directory.CreateDirectory(directory);
+        Directory.CreateDirectory(stateDirectory);
 
-        var json = JsonSerializer.Serialize(state, JsonOptions);
-        File.WriteAllText(_statePath, json);
+        var json = JsonSerializer.Serialize(state, SerializerOptions);
+        File.WriteAllText(_stateFilePath, json);
     }
 
-    private static void MergeServices(List<ServiceBackup> existing, IEnumerable<ServiceBackup> incoming)
+    private static void MergeServices(List<ServiceBackup> existingBackups, IEnumerable<ServiceBackup> newBackups)
     {
-        var known = new HashSet<string>(existing.Select(x => x.Name), StringComparer.OrdinalIgnoreCase);
-        foreach (var item in incoming.DistinctBy(x => x.Name, StringComparer.OrdinalIgnoreCase))
-        {
-            if (known.Add(item.Name))
-                existing.Add(item);
-        }
-    }
-
-    private static void MergeTasks(List<TaskBackup> existing, IEnumerable<TaskBackup> incoming)
-    {
-        var known = new HashSet<string>(existing.Select(x => x.Path), StringComparer.OrdinalIgnoreCase);
-        foreach (var item in incoming.DistinctBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
-        {
-            if (known.Add(item.Path))
-                existing.Add(item);
-        }
-    }
-
-    private static void MergeRunEntries(List<RunEntryBackup> existing, IEnumerable<RunEntryBackup> incoming)
-    {
-        var known = new HashSet<string>(
-            existing.Select(ToRunEntryKey),
+        var knownServiceNames = new HashSet<string>(
+            existingBackups.Select(backup => backup.Name),
             StringComparer.OrdinalIgnoreCase);
 
-        foreach (var item in incoming.DistinctBy(ToRunEntryKey, StringComparer.OrdinalIgnoreCase))
+        foreach (var backup in newBackups.DistinctBy(item => item.Name, StringComparer.OrdinalIgnoreCase))
         {
-            if (known.Add(ToRunEntryKey(item)))
-                existing.Add(item);
+            if (knownServiceNames.Add(backup.Name))
+                existingBackups.Add(backup);
         }
     }
 
-    private static string ToRunEntryKey(RunEntryBackup backup)
+    private static void MergeTasks(List<TaskBackup> existingBackups, IEnumerable<TaskBackup> newBackups)
+    {
+        var knownTaskPaths = new HashSet<string>(
+            existingBackups.Select(backup => backup.Path),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var backup in newBackups.DistinctBy(item => item.Path, StringComparer.OrdinalIgnoreCase))
+        {
+            if (knownTaskPaths.Add(backup.Path))
+                existingBackups.Add(backup);
+        }
+    }
+
+    private static void MergeRunEntries(List<RunEntryBackup> existingBackups, IEnumerable<RunEntryBackup> newBackups)
+    {
+        var knownEntryKeys = new HashSet<string>(
+            existingBackups.Select(BuildRunEntryIdentity),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var backup in newBackups.DistinctBy(BuildRunEntryIdentity, StringComparer.OrdinalIgnoreCase))
+        {
+            if (knownEntryKeys.Add(BuildRunEntryIdentity(backup)))
+                existingBackups.Add(backup);
+        }
+    }
+
+    private static string BuildRunEntryIdentity(RunEntryBackup backup)
         => $"{backup.Hive}|{backup.View}|{backup.Name}";
 }

@@ -1,189 +1,215 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.RegularExpressions;
 using OmenGamingHubUnlocker.Core;
 
 namespace OmenGamingHubUnlocker.Windows;
 
+/// <summary>
+/// Represents the block state of a single hosts entry.
+/// </summary>
 public sealed record HostsDomainState(string Domain, bool Blocked);
 
+/// <summary>
+/// Encapsulates hosts-file inspection and mutation.
+/// </summary>
 public static class HostsManager
 {
     public static (bool ok, string details) CheckWriteAccess(string marker)
     {
+        _ = marker;
+
         try
         {
-            var path = WindowsPaths.HostsPath;
-            if (!File.Exists(path))
-                return (false, $"hosts file not found: {path}");
+            var hostsFilePath = WindowsPaths.HostsPath;
+            if (!File.Exists(hostsFilePath))
+                return (false, $"hosts file not found: {hostsFilePath}");
 
-            // try open for read/write (no changes)
-            using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
+            // Opening the file for read/write without touching the contents is enough to validate permissions.
+            using var stream = new FileStream(hostsFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
             return (true, "hosts file is accessible for read/write.");
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            return (false, ex.Message);
+            return (false, exception.Message);
         }
     }
 
     public static List<HostsDomainState> GetDomainsStatus(IEnumerable<string> domains, string marker)
     {
-        var list = new List<HostsDomainState>();
+        _ = marker;
 
-        string[] lines;
-        try
-        {
-            lines = File.Exists(WindowsPaths.HostsPath) ? File.ReadAllLines(WindowsPaths.HostsPath) : Array.Empty<string>();
-        }
-        catch
-        {
-            lines = Array.Empty<string>();
-        }
+        var domainStates = new List<HostsDomainState>();
+        var hostsLines = TryReadHostsFile();
 
-        foreach (var d in domains)
+        foreach (var domain in domains)
         {
-            var blocked = lines.Any(l => IsDomainLine(l, d));
-            list.Add(new HostsDomainState(d, blocked));
+            var isBlocked = hostsLines.Any(line => IsDomainLine(line, domain));
+            domainStates.Add(new HostsDomainState(domain, isBlocked));
         }
 
-        return list;
+        return domainStates;
     }
 
     public static List<OperationLine> ActivateHostsBlock(string[] domains, string marker, bool dryRun)
     {
-        var lines = new List<OperationLine>();
-        var hostsPath = WindowsPaths.HostsPath;
+        var operationLines = new List<OperationLine>();
+        var hostsFilePath = WindowsPaths.HostsPath;
 
-        if (!File.Exists(hostsPath))
+        if (!File.Exists(hostsFilePath))
         {
-            lines.Add(new OperationLine { Level = "WARN", Text = $"hosts: file not found: {hostsPath}" });
-            return lines;
+            operationLines.Add(new OperationLine { Level = "WARN", Text = $"hosts: file not found: {hostsFilePath}" });
+            return operationLines;
         }
 
-        string[] content;
-        try { content = File.ReadAllLines(hostsPath); }
-        catch (Exception ex)
+        string[] existingLines;
+        try
         {
-            lines.Add(new OperationLine { Level = "ERR", Text = $"hosts: cannot read: {ex.Message}" });
-            return lines;
+            existingLines = File.ReadAllLines(hostsFilePath);
+        }
+        catch (Exception exception)
+        {
+            operationLines.Add(new OperationLine { Level = "ERR", Text = $"hosts: cannot read: {exception.Message}" });
+            return operationLines;
         }
 
-        var toAdd = new List<string>();
-        foreach (var d in domains)
+        var linesToAppend = new List<string>();
+        foreach (var domain in domains)
         {
-            if (content.Any(l => IsDomainLine(l, d)))
+            if (existingLines.Any(line => IsDomainLine(line, domain)))
                 continue;
 
-            toAdd.Add($"127.0.0.1\t{d}\t{marker}");
+            linesToAppend.Add($"127.0.0.1\t{domain}\t{marker}");
         }
 
-        if (toAdd.Count == 0)
+        if (linesToAppend.Count == 0)
         {
-            lines.Add(new OperationLine { Level = "INFO", Text = "hosts: nothing to add (already present)." });
-            return lines;
+            operationLines.Add(new OperationLine { Level = "INFO", Text = "hosts: nothing to add (already present)." });
+            return operationLines;
         }
 
-        foreach (var l in toAdd)
+        foreach (var lineToAppend in linesToAppend)
         {
             if (dryRun)
             {
-                lines.Add(new OperationLine { Level = "OK", Text = $"hosts: would add: {l}" });
+                operationLines.Add(new OperationLine { Level = "OK", Text = $"hosts: would add: {lineToAppend}" });
                 continue;
             }
 
-            var ok = TryAppendLineWithRetry(hostsPath, l, out var err);
-            lines.Add(new OperationLine
+            var appendSucceeded = TryAppendLineWithRetry(hostsFilePath, lineToAppend, out var appendError);
+            operationLines.Add(new OperationLine
             {
-                Level = ok ? "OK" : "WARN",
-                Text = ok ? $"hosts: added: {l}" : $"hosts: failed to add line: {err}"
+                Level = appendSucceeded ? "OK" : "WARN",
+                Text = appendSucceeded ? $"hosts: added: {lineToAppend}" : $"hosts: failed to add line: {appendError}"
             });
         }
 
-        return lines;
+        return operationLines;
     }
 
     public static List<OperationLine> DisableHostsBlock(string marker, bool dryRun)
     {
-        var lines = new List<OperationLine>();
-        var hostsPath = WindowsPaths.HostsPath;
+        var operationLines = new List<OperationLine>();
+        var hostsFilePath = WindowsPaths.HostsPath;
 
-        if (!File.Exists(hostsPath))
+        if (!File.Exists(hostsFilePath))
         {
-            lines.Add(new OperationLine { Level = "WARN", Text = $"hosts: file not found: {hostsPath}" });
-            return lines;
+            operationLines.Add(new OperationLine { Level = "WARN", Text = $"hosts: file not found: {hostsFilePath}" });
+            return operationLines;
         }
 
-        string[] content;
-        try { content = File.ReadAllLines(hostsPath); }
-        catch (Exception ex)
+        string[] existingLines;
+        try
         {
-            lines.Add(new OperationLine { Level = "ERR", Text = $"hosts: cannot read: {ex.Message}" });
-            return lines;
+            existingLines = File.ReadAllLines(hostsFilePath);
+        }
+        catch (Exception exception)
+        {
+            operationLines.Add(new OperationLine { Level = "ERR", Text = $"hosts: cannot read: {exception.Message}" });
+            return operationLines;
         }
 
-        var filtered = content.Where(l => !l.Contains(marker, StringComparison.OrdinalIgnoreCase)).ToArray();
-        var removedCount = content.Length - filtered.Length;
+        var remainingLines = existingLines
+            .Where(line => !line.Contains(marker, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
 
-        if (removedCount <= 0)
+        var removedLineCount = existingLines.Length - remainingLines.Length;
+
+        if (removedLineCount <= 0)
         {
-            lines.Add(new OperationLine { Level = "INFO", Text = "hosts: no marker lines found to remove." });
-            return lines;
+            operationLines.Add(new OperationLine { Level = "INFO", Text = "hosts: no marker lines found to remove." });
+            return operationLines;
         }
 
         if (dryRun)
         {
-            lines.Add(new OperationLine { Level = "OK", Text = $"hosts: would remove {removedCount} line(s) with marker '{marker}'." });
-            return lines;
+            operationLines.Add(new OperationLine { Level = "OK", Text = $"hosts: would remove {removedLineCount} line(s) with marker '{marker}'." });
+            return operationLines;
         }
 
         try
         {
-            File.WriteAllLines(hostsPath, filtered, Encoding.ASCII);
-            lines.Add(new OperationLine { Level = "OK", Text = $"hosts: removed {removedCount} line(s)." });
+            File.WriteAllLines(hostsFilePath, remainingLines, Encoding.ASCII);
+            operationLines.Add(new OperationLine { Level = "OK", Text = $"hosts: removed {removedLineCount} line(s)." });
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            lines.Add(new OperationLine { Level = "ERR", Text = $"hosts: failed to write: {ex.Message}" });
+            operationLines.Add(new OperationLine { Level = "ERR", Text = $"hosts: failed to write: {exception.Message}" });
         }
 
-        return lines;
+        return operationLines;
+    }
+
+    private static string[] TryReadHostsFile()
+    {
+        try
+        {
+            return File.Exists(WindowsPaths.HostsPath)
+                ? File.ReadAllLines(WindowsPaths.HostsPath)
+                : Array.Empty<string>();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
     }
 
     private static bool IsDomainLine(string line, string domain)
     {
-        var escaped = Regex.Escape(domain);
-        var rx = new Regex(@"^\s*\d{1,3}(\.\d{1,3}){3}\s+" + escaped + @"(\s|$)",
+        var escapedDomain = Regex.Escape(domain);
+        var matcher = new Regex(
+            @"^\s*\d{1,3}(\.\d{1,3}){3}\s+" + escapedDomain + @"(\s|$)",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        return rx.IsMatch(line ?? "");
+
+        return matcher.IsMatch(line ?? string.Empty);
     }
 
     private static bool TryAppendLineWithRetry(string path, string line, out string error)
     {
         const int maxRetries = 3;
-        const int delayMs = 250;
+        const int retryDelayMs = 250;
 
-        for (int i = 1; i <= maxRetries; i++)
+        for (var attempt = 1; attempt <= maxRetries; attempt++)
         {
             try
             {
                 File.AppendAllText(path, Environment.NewLine + line, Encoding.ASCII);
-                error = "";
+                error = string.Empty;
                 return true;
             }
-            catch (IOException ex)
+            catch (IOException exception)
             {
-                if (i < maxRetries)
+                if (attempt < maxRetries)
                 {
-                    Thread.Sleep(delayMs);
+                    Thread.Sleep(retryDelayMs);
                     continue;
                 }
 
-                error = ex.Message;
+                error = exception.Message;
                 return false;
             }
-            catch (Exception ex)
+            catch (Exception exception)
             {
-                error = ex.Message;
+                error = exception.Message;
                 return false;
             }
         }

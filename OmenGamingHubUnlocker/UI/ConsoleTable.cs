@@ -3,6 +3,9 @@ using System.Reflection;
 
 namespace OmenGamingHubUnlocker.UI;
 
+/// <summary>
+/// Renders flexible status tables from loosely typed snapshot objects.
+/// </summary>
 public static class ConsoleTable
 {
     public enum StatusIntent
@@ -13,10 +16,7 @@ public static class ConsoleTable
     }
 
     /// <summary>
-    /// Prints a table of snapshots.
-    /// - showResultColumn=false: Area|Item|Current only (best for Status).
-    /// - predictive=true: Result column contains "Will ..." actions (best for Dry run).
-    /// - predictive=false: Result column contains OK/WARN/ERR/INFO based on intent (best for Activate/Disable).
+    /// Renders a table of status snapshots while adapting to the actual object shape at runtime.
     /// </summary>
     public static bool PrintStatusTable(
         object snapshots,
@@ -24,70 +24,71 @@ public static class ConsoleTable
         bool showResultColumn = true,
         bool predictive = false)
     {
-        var rows = ExtractRows(snapshots);
-        if (rows.Count == 0)
+        var tableRows = ExtractRows(snapshots);
+        if (tableRows.Count == 0)
         {
             ConsoleHelpers.WriteHint("No status table data.");
             return false;
         }
 
-        var members = GetMembers(rows[0]);
+        var members = GetMembers(tableRows[0]);
         if (members.Count == 0)
         {
-            PrintFallbackToString(rows);
+            PrintFallbackToString(tableRows);
             return true;
         }
 
-        // Columns: Area | Item | Current | Result (optional)
-        var colArea = PickBestMember(members, AreaScore);
-        var colItem = PickBestMember(members, ItemScore, exclude: colArea);
-        var colCur  = PickBestMember(members, CurrentScore, exclude: colArea, exclude2: colItem);
+        // The renderer uses reflection so report types can stay small and task-focused.
+        var areaMember = PickBestMember(members, AreaScore);
+        var itemMember = PickBestMember(members, ItemScore, exclude: areaMember);
+        var currentMember = PickBestMember(members, CurrentScore, exclude: areaMember, exclude2: itemMember);
 
-        // Optional meta columns from snapshot
-        var colLevel    = PickBestMember(members, LevelScore);
-        var colSuccess  = PickBestMember(members, SuccessBoolScore);
-        var colExpected = PickBestMember(members, ExpectedScore);
-        var colError    = PickBestMember(members, ErrorScore);
+        var levelMember = PickBestMember(members, LevelScore);
+        var successMember = PickBestMember(members, SuccessBoolScore);
+        var expectedMember = PickBestMember(members, ExpectedScore);
+        var errorMember = PickBestMember(members, ErrorScore);
 
-        colArea ??= members.FirstOrDefault();
-        colItem ??= members.FirstOrDefault(m => m != colArea);
-        colCur  ??= members.FirstOrDefault(m => m != colArea && m != colItem);
+        areaMember ??= members.FirstOrDefault();
+        itemMember ??= members.FirstOrDefault(member => member != areaMember);
+        currentMember ??= members.FirstOrDefault(member => member != areaMember && member != itemMember);
 
-        var areas   = rows.Select(r => SafeGetString(colArea, r)).ToList();
-        var items   = rows.Select(r => SafeGetString(colItem, r)).ToList();
-        var current = rows.Select(r => SafeGetString(colCur,  r)).ToList();
+        var areaValues = tableRows.Select(row => SafeGetString(areaMember, row)).ToList();
+        var itemValues = tableRows.Select(row => SafeGetString(itemMember, row)).ToList();
+        var currentValues = tableRows.Select(row => SafeGetString(currentMember, row)).ToList();
 
-        // Build Result only if column requested
-        var results = new List<string>(rows.Count);
+        var resultValues = new List<string>(tableRows.Count);
         if (showResultColumn)
         {
-            for (var idx = 0; idx < rows.Count; idx++)
+            for (var index = 0; index < tableRows.Count; index++)
             {
-                var row = rows[idx];
+                var row = tableRows[index];
 
-                var levelRaw    = SafeGetString(colLevel, row);
-                var successRaw  = SafeGetString(colSuccess, row);
-                var expectedRaw = SafeGetString(colExpected, row);
-                var errorRaw    = SafeGetString(colError, row);
+                var levelRaw = SafeGetString(levelMember, row);
+                var successRaw = SafeGetString(successMember, row);
+                var expectedRaw = SafeGetString(expectedMember, row);
+                var errorRaw = SafeGetString(errorMember, row);
 
-                var area = areas[idx];
-                var item = items[idx];
-                var cur  = current[idx];
+                var area = areaValues[index];
+                var item = itemValues[index];
+                var current = currentValues[index];
 
-                var res = predictive
-                    ? ComputePrediction(area, item, cur, intent)
-                    : ComputeEvaluation(area, item, cur, intent, levelRaw, successRaw, expectedRaw, errorRaw);
+                var result = predictive
+                    ? ComputePrediction(area, item, current, intent)
+                    : ComputeEvaluation(area, item, current, intent, levelRaw, successRaw, expectedRaw, errorRaw);
 
-                results.Add(res);
+                resultValues.Add(result);
             }
         }
 
-        // Fill empties for nicer output
-        for (var idx = 0; idx < rows.Count; idx++)
+        for (var index = 0; index < tableRows.Count; index++)
         {
-            if (string.IsNullOrWhiteSpace(areas[idx])) areas[idx] = "General";
-            if (string.IsNullOrWhiteSpace(items[idx])) items[idx] = rows[idx].ToString() ?? "";
-            current[idx] ??= "";
+            if (string.IsNullOrWhiteSpace(areaValues[index]))
+                areaValues[index] = "General";
+
+            if (string.IsNullOrWhiteSpace(itemValues[index]))
+                itemValues[index] = tableRows[index].ToString() ?? "";
+
+            currentValues[index] ??= string.Empty;
         }
 
         const string colAName = "Area";
@@ -95,24 +96,23 @@ public static class ConsoleTable
         const string colCName = "Current";
         const string colRName = "Result";
 
-        var widthA = Math.Clamp(Math.Max(colAName.Length, areas.Max(s => s.Length)), 8, 22);
-        var widthI = Math.Clamp(Math.Max(colIName.Length, items.Max(s => s.Length)), 12, 62);
-        var widthC = Math.Clamp(Math.Max(colCName.Length, current.Max(s => s.Length)), 10, 70);
+        var widthA = Math.Clamp(Math.Max(colAName.Length, areaValues.Max(value => value.Length)), 8, 22);
+        var widthI = Math.Clamp(Math.Max(colIName.Length, itemValues.Max(value => value.Length)), 12, 62);
+        var widthC = Math.Clamp(Math.Max(colCName.Length, currentValues.Max(value => value.Length)), 10, 70);
         var widthR = showResultColumn
-            ? Math.Clamp(Math.Max(colRName.Length, results.Max(s => s.Length)), 8, 22)
+            ? Math.Clamp(Math.Max(colRName.Length, resultValues.Max(value => value.Length)), 8, 22)
             : 0;
 
-        // Fit to console width (shrink Current first)
-        var win = Console.WindowWidth;
-        if (win > 0)
+        var consoleWidth = Console.WindowWidth;
+        if (consoleWidth > 0)
         {
             var total = showResultColumn
                 ? (widthA + widthI + widthC + widthR + 9)
                 : (widthA + widthI + widthC + 6);
 
-            if (total > win - 1)
+            if (total > consoleWidth - 1)
             {
-                var overflow = total - (win - 1);
+                var overflow = total - (consoleWidth - 1);
                 widthC = Math.Max(24, widthC - overflow);
             }
         }
@@ -127,21 +127,21 @@ public static class ConsoleTable
                 Console.WriteLine($"{new string('-', widthA)}-+-{new string('-', widthI)}-+-{new string('-', widthC)}-+-{new string('-', widthR)}");
             });
 
-            for (var idx = 0; idx < rows.Count; idx++)
+            for (var index = 0; index < tableRows.Count; index++)
             {
-                var area = Trunc(areas[idx], widthA);
-                var item = Trunc(items[idx], widthI);
-                var cur  = Trunc(current[idx], widthC);
-                var res  = Trunc(results[idx], widthR);
+                var area = Trunc(areaValues[index], widthA);
+                var item = Trunc(itemValues[index], widthI);
+                var current = Trunc(currentValues[index], widthC);
+                var result = Trunc(resultValues[index], widthR);
 
                 Console.Write(area.PadRight(widthA));
                 Console.Write(" | ");
                 Console.Write(item.PadRight(widthI));
                 Console.Write(" | ");
-                Console.Write(cur.PadRight(widthC));
+                Console.Write(current.PadRight(widthC));
                 Console.Write(" | ");
 
-                ConsoleHelpers.WithColor(ResultColor(res), () => Console.Write(res.PadRight(widthR)));
+                ConsoleHelpers.WithColor(ResultColor(result), () => Console.Write(result.PadRight(widthR)));
                 Console.WriteLine();
             }
         }
@@ -153,17 +153,17 @@ public static class ConsoleTable
                 Console.WriteLine($"{new string('-', widthA)}-+-{new string('-', widthI)}-+-{new string('-', widthC)}");
             });
 
-            for (var idx = 0; idx < rows.Count; idx++)
+            for (var index = 0; index < tableRows.Count; index++)
             {
-                var area = Trunc(areas[idx], widthA);
-                var item = Trunc(items[idx], widthI);
-                var cur  = Trunc(current[idx], widthC);
+                var area = Trunc(areaValues[index], widthA);
+                var item = Trunc(itemValues[index], widthI);
+                var current = Trunc(currentValues[index], widthC);
 
                 Console.Write(area.PadRight(widthA));
                 Console.Write(" | ");
                 Console.Write(item.PadRight(widthI));
                 Console.Write(" | ");
-                Console.Write(cur.PadRight(widthC));
+                Console.Write(current.PadRight(widthC));
                 Console.WriteLine();
             }
         }

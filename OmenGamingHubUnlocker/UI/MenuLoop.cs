@@ -3,6 +3,9 @@ using OmenGamingHubUnlocker.Core;
 
 namespace OmenGamingHubUnlocker.UI;
 
+/// <summary>
+/// Owns the interactive console workflow and delegates the real work to the engine.
+/// </summary>
 public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
 {
     private const string RepoUrl = "https://github.com/Avazbek22/OmenGamingHubUnlocker";
@@ -11,7 +14,7 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
     {
         while (true)
         {
-            Console.Clear();
+            ConsoleHelpers.TryClearScreen();
             RenderMainMenuHeader();
 
             Console.WriteLine("[1] Check status");
@@ -23,9 +26,9 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
             Console.WriteLine("[7] Exit");
             Console.WriteLine();
 
-            var choice = ConsoleHelpers.ReadMenuChoice();
+            var selectedAction = ConsoleHelpers.ReadMenuChoice();
 
-            switch (choice)
+            switch (selectedAction)
             {
                 case "1":
                     ShowStatus();
@@ -66,9 +69,13 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
         });
 
         if (appInfo.IsAdministrator)
+        {
             ConsoleHelpers.WithColor(ConsoleColor.Green, () => Console.WriteLine("Admin: Yes"));
+        }
         else
+        {
             ConsoleHelpers.WithColor(ConsoleColor.Yellow, () => Console.WriteLine("Admin: No (some actions will be blocked)"));
+        }
 
         Console.WriteLine();
     }
@@ -76,23 +83,24 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
     private static void RenderScreenHeader(string title)
     {
         ConsoleHelpers.WriteMiniHeader(AppInfo.AppName);
+
         if (!string.IsNullOrWhiteSpace(title))
             ConsoleHelpers.WriteSection(title);
     }
 
     private void ShowStatus()
     {
-        Console.Clear();
+        ConsoleHelpers.TryClearScreen();
         RenderScreenHeader("Status");
 
-        var report = engine.GetStatusReport();
-        PrintStatusReport(report, ConsoleTable.StatusIntent.Neutral, showResultColumn: false, predictive: false);
+        var statusReport = engine.GetStatusReport();
+        PrintStatusReport(statusReport, ConsoleTable.StatusIntent.Neutral, showResultColumn: false, predictive: false);
         ConsoleHelpers.Pause();
     }
 
     private void ShowDryRun()
     {
-        Console.Clear();
+        ConsoleHelpers.TryClearScreen();
         RenderScreenHeader("Dry run");
 
         ConsoleHelpers.WriteBullets("What will be checked", new[]
@@ -109,17 +117,17 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
         if (!ConsoleHelpers.ConfirmEnterOrEscape("Press Enter to start dry run or Esc to cancel..."))
             return;
 
-        Console.Clear();
+        ConsoleHelpers.TryClearScreen();
         RenderScreenHeader("Dry run");
 
-        var report = engine.RunDryRunDeep();
-        PrintOperationReport(report, ConsoleTable.StatusIntent.AfterActivate, showResultColumn: true, predictive: true);
+        var operationReport = engine.RunDryRunDeep();
+        PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterActivate, showResultColumn: true, predictive: true);
         ConsoleHelpers.Pause();
     }
 
     private void RunActivate()
     {
-        Console.Clear();
+        ConsoleHelpers.TryClearScreen();
         RenderScreenHeader("Activation");
 
         ConsoleHelpers.WriteBullets("What will happen", new[]
@@ -136,17 +144,17 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
         if (!ConsoleHelpers.ConfirmEnterOrEscape("Press Enter to start activation or Esc to cancel..."))
             return;
 
-        Console.Clear();
+        ConsoleHelpers.TryClearScreen();
         RenderScreenHeader("Activation");
 
-        var report = engine.Activate(UnlockerOptions.ForActivate());
-        PrintOperationReport(report, ConsoleTable.StatusIntent.AfterActivate, showResultColumn: true, predictive: false);
+        var operationReport = engine.Activate(UnlockerOptions.ForActivate());
+        PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterActivate, showResultColumn: true, predictive: false);
         ConsoleHelpers.Pause();
     }
 
     private void RunDisable()
     {
-        Console.Clear();
+        ConsoleHelpers.TryClearScreen();
         RenderScreenHeader("Disable");
 
         ConsoleHelpers.WriteBullets("What will happen", new[]
@@ -160,17 +168,17 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
         if (!ConsoleHelpers.ConfirmEnterOrEscape("Press Enter to start disable or Esc to cancel..."))
             return;
 
-        Console.Clear();
+        ConsoleHelpers.TryClearScreen();
         RenderScreenHeader("Disable");
 
-        var report = engine.Disable(UnlockerOptions.ForDisable());
-        PrintOperationReport(report, ConsoleTable.StatusIntent.AfterDisable, showResultColumn: true, predictive: false);
+        var operationReport = engine.Disable(UnlockerOptions.ForDisable());
+        PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterDisable, showResultColumn: true, predictive: false);
         ConsoleHelpers.Pause();
     }
 
     private void RunResetAndReapply()
     {
-        Console.Clear();
+        ConsoleHelpers.TryClearScreen();
         RenderScreenHeader("Reset OMEN app");
 
         ConsoleHelpers.WriteBullets("What will happen", new[]
@@ -187,38 +195,38 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
         if (!ConsoleHelpers.ConfirmEnterOrEscape("Press Enter to start reset and reapply or Esc to cancel..."))
             return;
 
-        Console.Clear();
+        ConsoleHelpers.TryClearScreen();
         RenderScreenHeader("Reset OMEN app");
 
-        var report = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
-        PrintOperationReport(report, ConsoleTable.StatusIntent.AfterActivate, showResultColumn: true, predictive: false);
+        var operationReport = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
+        PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterActivate, showResultColumn: true, predictive: false);
         ConsoleHelpers.Pause();
     }
 
     private void ShowAbout()
     {
-        Console.Clear();
+        ConsoleHelpers.TryClearScreen();
         RenderScreenHeader("About");
 
         ConsoleHelpers.PrintLinesAnimated(new[]
         {
             "OmenGamingHubUnlocker is a small helper tool for HP OMEN laptops/desktops.",
-            "",
+            string.Empty,
             "Purpose:",
             " - Keep OMEN Gaming Hub installed, but prevent it from auto-starting and running unwanted background activity.",
-            "",
+            string.Empty,
             "What it can do:",
             " - Tame auto-start behavior (services / scheduled tasks / Run entries)",
             " - Block OMEN executables outbound traffic via Windows Firewall",
             " - Block known OMEN endpoints via hosts file",
             " - Reset the OMEN AppX package and immediately re-apply taming",
-            "",
+            string.Empty,
             "Author:",
             " - Avazbek22",
-            "",
+            string.Empty,
             "GitHub:",
             $" - {RepoUrl}",
-            "",
+            string.Empty,
             "License:",
             " - MIT"
         });
@@ -227,8 +235,8 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
     }
 
     private static void PrintStatusReport(
-        StatusReport report,
-        ConsoleTable.StatusIntent intent,
+        StatusReport statusReport,
+        ConsoleTable.StatusIntent tableIntent,
         bool showResultColumn,
         bool predictive)
     {
@@ -236,29 +244,33 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
         Console.WriteLine(new string('-', 16));
 
         ConsoleHelpers.WriteSection("Snapshot");
-        ConsoleTable.PrintStatusTable(report.Snapshots, intent, showResultColumn, predictive);
+        ConsoleTable.PrintStatusTable(statusReport.Snapshots, tableIntent, showResultColumn, predictive);
     }
 
     private static void PrintOperationReport(
-        OperationReport report,
-        ConsoleTable.StatusIntent intent,
+        OperationReport operationReport,
+        ConsoleTable.StatusIntent tableIntent,
         bool showResultColumn,
         bool predictive)
     {
-        if (report.Success)
-            ConsoleHelpers.WriteSuccess(report.Title);
+        if (operationReport.Success)
+        {
+            ConsoleHelpers.WriteSuccess(operationReport.Title);
+        }
         else
-            ConsoleHelpers.WriteError(report.Title);
+        {
+            ConsoleHelpers.WriteError(operationReport.Title);
+        }
 
-        Console.WriteLine(new string('-', Math.Max(10, report.Title.Length)));
+        Console.WriteLine(new string('-', Math.Max(10, operationReport.Title.Length)));
 
-        if (report.Lines.Count > 0)
+        if (operationReport.Lines.Count > 0)
         {
             Console.WriteLine();
-            ConsoleHelpers.PrintOperationLinesAnimated(report.Lines);
+            ConsoleHelpers.PrintOperationLinesAnimated(operationReport.Lines);
         }
 
         ConsoleHelpers.WriteSection("Snapshot");
-        ConsoleTable.PrintStatusTable(report.SnapshotsAfter, intent, showResultColumn, predictive);
+        ConsoleTable.PrintStatusTable(operationReport.SnapshotsAfter, tableIntent, showResultColumn, predictive);
     }
 }

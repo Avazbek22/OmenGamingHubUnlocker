@@ -2,6 +2,9 @@ using OmenGamingHubUnlocker.Windows;
 
 namespace OmenGamingHubUnlocker.Core;
 
+/// <summary>
+/// Coordinates every read/write operation needed to inspect, tame, restore, or reset OMEN Gaming Hub.
+/// </summary>
 public sealed class UnlockerEngine
 {
     private const int ActivationStabilizationAttempts = 2;
@@ -9,6 +12,9 @@ public sealed class UnlockerEngine
 
     private readonly UnlockerStateStore _stateStore = new();
 
+    /// <summary>
+    /// Builds a neutral snapshot of the current system state.
+    /// </summary>
     public StatusReport GetStatusReport()
     {
         var report = new StatusReport();
@@ -100,6 +106,9 @@ public sealed class UnlockerEngine
         return report;
     }
 
+    /// <summary>
+    /// Performs a non-mutating capability check and preview of what activation would touch.
+    /// </summary>
     public OperationReport RunDryRunDeep()
     {
         var report = OperationReport.Ok("Dry run completed (no changes applied).");
@@ -137,7 +146,7 @@ public sealed class UnlockerEngine
         else
             report.Lines.Add(new OperationLine { Level = "WARN", Text = $"AppX target: {packageDetails}" });
 
-        var plan = BuildActivationPlan();
+        var plan = CollectActivationPlan();
         report.Lines.Add(new OperationLine
         {
             Level = "INFO",
@@ -171,20 +180,26 @@ public sealed class UnlockerEngine
         return report;
     }
 
+    /// <summary>
+    /// Applies the standard tame configuration.
+    /// </summary>
     public OperationReport Activate(UnlockerOptions options)
     {
         var report = OperationReport.Ok("Activation completed.");
-        ExecuteActivationFlow(report, options, "Activate scripts", includeProcessTermination: true);
-        RunActivationStabilization(report, options, "Activation stabilization", killProcesses: options.TryKillProcesses);
-        FinalizeReport(report, "Activation finished with errors.");
+        RunActivationFlow(report, options, "Activate scripts", includeProcessTermination: true);
+        RunActivationStabilizationSweeps(report, options, "Activation stabilization", killProcesses: options.TryKillProcesses);
+        CompleteReport(report, "Activation finished with errors.");
         return report;
     }
 
+    /// <summary>
+    /// Restores the last known pre-activation state from the persisted backup.
+    /// </summary>
     public OperationReport Disable(UnlockerOptions options)
     {
         var report = OperationReport.Ok("Disable completed.");
-        ExecuteDisableFlow(report, options, "Disable scripts");
-        FinalizeReport(report, "Disable finished with errors.");
+        RunDisableFlow(report, options, "Disable scripts");
+        CompleteReport(report, "Disable finished with errors.");
 
         if (!options.DryRun && report.Success)
         {
@@ -195,6 +210,9 @@ public sealed class UnlockerEngine
         return report;
     }
 
+    /// <summary>
+    /// Executes a full Windows app reset and immediately re-applies tame mode afterwards.
+    /// </summary>
     public OperationReport ResetAndReapply(UnlockerOptions options)
     {
         var report = OperationReport.Ok("Reset and reapply completed.");
@@ -212,24 +230,24 @@ public sealed class UnlockerEngine
             report.Lines.Add(new OperationLine { Level = "ERR", Text = $"Reset: unexpected failure - {ex.Message}" });
         }
 
-        WaitForPostResetSettle(report, options);
-        ExecuteActivationFlow(report, options, "Refresh taming after reset", includeProcessTermination: false);
-        RunActivationStabilization(report, options, "Post-reset stabilization", killProcesses: true);
-        FinalizeReport(report, "Reset and reapply finished with errors.");
+        WaitForResetSideEffectsToSettle(report, options);
+        RunActivationFlow(report, options, "Refresh taming after reset", includeProcessTermination: false);
+        RunActivationStabilizationSweeps(report, options, "Post-reset stabilization", killProcesses: true);
+        CompleteReport(report, "Reset and reapply finished with errors.");
         return report;
     }
 
-    private void ExecuteActivationFlow(OperationReport report, UnlockerOptions options, string title, bool includeProcessTermination)
+    private void RunActivationFlow(OperationReport report, UnlockerOptions options, string title, bool includeProcessTermination)
     {
         report.Lines.Add(new OperationLine { Level = "INFO", Text = $"{title}: started." });
 
-        var plan = BuildActivationPlan();
-        PersistActivationBackups(plan, options, report);
+        var activationPlan = CollectActivationPlan();
+        SaveActivationBackups(activationPlan, options, report);
 
         if (includeProcessTermination)
             AddProcessTerminationLines(report, options);
 
-        ApplyActivationPlan(report, plan, options);
+        ApplyActivationPlan(report, activationPlan, options);
 
         ApplyFirewall(report, options, activate: true);
         ApplyHosts(report, options, activate: true);
@@ -237,7 +255,7 @@ public sealed class UnlockerEngine
         report.Lines.Add(new OperationLine { Level = "INFO", Text = $"{title}: finished." });
     }
 
-    private void ExecuteDisableFlow(OperationReport report, UnlockerOptions options, string title)
+    private void RunDisableFlow(OperationReport report, UnlockerOptions options, string title)
     {
         report.Lines.Add(new OperationLine { Level = "INFO", Text = $"{title}: started." });
 
@@ -278,7 +296,7 @@ public sealed class UnlockerEngine
         report.Lines.Add(new OperationLine { Level = "INFO", Text = $"{title}: finished." });
     }
 
-    private void PersistActivationBackups(ActivationPlan plan, UnlockerOptions options, OperationReport report)
+    private void SaveActivationBackups(ActivationPlan activationPlan, UnlockerOptions options, OperationReport report)
     {
         if (options.DryRun)
         {
@@ -288,16 +306,16 @@ public sealed class UnlockerEngine
 
         try
         {
-            var serviceBackups = plan.ServicesToManual.Select(x => new ServiceBackup(x.Name, x.StartMode));
-            var taskBackups = plan.TasksToDisable.Select(x => new TaskBackup(x.Path, x.Enabled));
-            var runEntryBackups = plan.RunEntriesToRemove.Select(x => new RunEntryBackup(x.Hive, x.View, x.Name, x.Value));
+            var serviceBackups = activationPlan.ServicesToManual.Select(x => new ServiceBackup(x.Name, x.StartMode));
+            var taskBackups = activationPlan.TasksToDisable.Select(x => new TaskBackup(x.Path, x.Enabled));
+            var runEntryBackups = activationPlan.RunEntriesToRemove.Select(x => new RunEntryBackup(x.Hive, x.View, x.Name, x.Value));
 
             _stateStore.PersistBackups(serviceBackups, taskBackups, runEntryBackups);
 
             report.Lines.Add(new OperationLine
             {
                 Level = "INFO",
-                Text = $"State backup: saved {plan.ServicesToManual.Count} service(s), {plan.TasksToDisable.Count} task(s), {plan.RunEntriesToRemove.Count} Run entries."
+                Text = $"State backup: saved {activationPlan.ServicesToManual.Count} service(s), {activationPlan.TasksToDisable.Count} task(s), {activationPlan.RunEntriesToRemove.Count} Run entries."
             });
         }
         catch (Exception ex)
@@ -306,7 +324,7 @@ public sealed class UnlockerEngine
         }
     }
 
-    private void RunActivationStabilization(OperationReport report, UnlockerOptions options, string title, bool killProcesses)
+    private void RunActivationStabilizationSweeps(OperationReport report, UnlockerOptions options, string title, bool killProcesses)
     {
         if (options.DryRun)
         {
@@ -319,13 +337,13 @@ public sealed class UnlockerEngine
             Thread.Sleep(ActivationStabilizationDelayMs);
 
             var runningProcesses = ProcessManager.FindMatchingProcesses(OmenTargets.ProcessNamePatterns);
-            var plan = BuildActivationPlan();
+            var activationPlan = CollectActivationPlan();
 
             var hasPendingChanges =
                 runningProcesses.Count > 0 ||
-                plan.ServicesToManual.Count > 0 ||
-                plan.TasksToDisable.Count > 0 ||
-                plan.RunEntriesToRemove.Count > 0;
+                activationPlan.ServicesToManual.Count > 0 ||
+                activationPlan.TasksToDisable.Count > 0 ||
+                activationPlan.RunEntriesToRemove.Count > 0;
 
             if (!hasPendingChanges)
             {
@@ -340,19 +358,19 @@ public sealed class UnlockerEngine
             report.Lines.Add(new OperationLine
             {
                 Level = "INFO",
-                Text = $"{title}: sweep {attempt} found {runningProcesses.Count} process(es), {plan.ServicesToManual.Count} service change(s), {plan.TasksToDisable.Count} task change(s), {plan.RunEntriesToRemove.Count} Run entry change(s)."
+                Text = $"{title}: sweep {attempt} found {runningProcesses.Count} process(es), {activationPlan.ServicesToManual.Count} service change(s), {activationPlan.TasksToDisable.Count} task change(s), {activationPlan.RunEntriesToRemove.Count} Run entry change(s)."
             });
 
-            PersistActivationBackups(plan, options, report);
+            SaveActivationBackups(activationPlan, options, report);
 
             if (killProcesses)
                 AddProcessTerminationLines(report, options);
 
-            ApplyActivationPlan(report, plan, options);
+            ApplyActivationPlan(report, activationPlan, options);
         }
     }
 
-    private static void WaitForPostResetSettle(OperationReport report, UnlockerOptions options)
+    private static void WaitForResetSideEffectsToSettle(OperationReport report, UnlockerOptions options)
     {
         if (options.DryRun)
         {
@@ -369,11 +387,11 @@ public sealed class UnlockerEngine
         Thread.Sleep(ActivationStabilizationDelayMs);
     }
 
-    private static void ApplyActivationPlan(OperationReport report, ActivationPlan plan, UnlockerOptions options)
+    private static void ApplyActivationPlan(OperationReport report, ActivationPlan activationPlan, UnlockerOptions options)
     {
         try
         {
-            var serviceTargets = plan.ServicesToManual
+            var serviceTargets = activationPlan.ServicesToManual
                 .Select(x => new ServiceStartModeTarget(x.Name, "Manual"));
 
             report.Lines.AddRange(ServiceManager.ApplyStartModeTargets(serviceTargets, options.DryRun));
@@ -385,7 +403,7 @@ public sealed class UnlockerEngine
 
         try
         {
-            var taskTargets = plan.TasksToDisable
+            var taskTargets = activationPlan.TasksToDisable
                 .Select(x => new TaskEnableTarget(x.Path, false));
 
             report.Lines.AddRange(TaskSchedulerManager.ApplyEnabledTargets(taskTargets, options.DryRun));
@@ -397,7 +415,7 @@ public sealed class UnlockerEngine
 
         try
         {
-            report.Lines.AddRange(RegistryRunManager.RemoveEntries(plan.RunEntriesToRemove, options.DryRun));
+            report.Lines.AddRange(RegistryRunManager.RemoveEntries(activationPlan.RunEntriesToRemove, options.DryRun));
         }
         catch (Exception ex)
         {
@@ -477,7 +495,7 @@ public sealed class UnlockerEngine
         }
     }
 
-    private void FinalizeReport(OperationReport report, string errorTitle)
+    private void CompleteReport(OperationReport report, string errorTitle)
     {
         report.SnapshotsAfter.Clear();
         report.SnapshotsAfter.AddRange(GetStatusReport().Snapshots);
@@ -487,7 +505,7 @@ public sealed class UnlockerEngine
             report.Title = errorTitle;
     }
 
-    private static ActivationPlan BuildActivationPlan()
+    private static ActivationPlan CollectActivationPlan()
     {
         var services = ServiceManager.QueryServices(OmenTargets.ServicePatterns)
             .DistinctBy(x => x.Name, StringComparer.OrdinalIgnoreCase)

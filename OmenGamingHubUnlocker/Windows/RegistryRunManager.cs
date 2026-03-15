@@ -3,6 +3,9 @@ using OmenGamingHubUnlocker.Core;
 
 namespace OmenGamingHubUnlocker.Windows;
 
+/// <summary>
+/// Snapshot of a Run key entry together with its registry location.
+/// </summary>
 public sealed record RunEntry(RegistryHive Hive, RegistryView View, string Name, string Value)
 {
     public string Location => $"{FormatHive(Hive)}({View})\\{RunSubKey}";
@@ -13,29 +16,32 @@ public sealed record RunEntry(RegistryHive Hive, RegistryView View, string Name,
         => hive == RegistryHive.CurrentUser ? "HKCU" : "HKLM";
 }
 
+/// <summary>
+/// Encapsulates Run key discovery, removal, and restore logic.
+/// </summary>
 public static class RegistryRunManager
 {
     public static List<RunEntry> QueryRunEntries(string[] patterns)
     {
-        var list = new List<RunEntry>();
+        var matchingEntries = new List<RunEntry>();
 
-        list.AddRange(ReadFrom(RegistryHive.CurrentUser, RegistryView.Registry64, patterns));
-        list.AddRange(ReadFrom(RegistryHive.CurrentUser, RegistryView.Registry32, patterns));
-        list.AddRange(ReadFrom(RegistryHive.LocalMachine, RegistryView.Registry64, patterns));
-        list.AddRange(ReadFrom(RegistryHive.LocalMachine, RegistryView.Registry32, patterns));
+        matchingEntries.AddRange(ReadFrom(RegistryHive.CurrentUser, RegistryView.Registry64, patterns));
+        matchingEntries.AddRange(ReadFrom(RegistryHive.CurrentUser, RegistryView.Registry32, patterns));
+        matchingEntries.AddRange(ReadFrom(RegistryHive.LocalMachine, RegistryView.Registry64, patterns));
+        matchingEntries.AddRange(ReadFrom(RegistryHive.LocalMachine, RegistryView.Registry32, patterns));
 
-        return list
-            .DistinctBy(ToIdentityKey, StringComparer.OrdinalIgnoreCase)
+        return matchingEntries
+            .DistinctBy(BuildIdentityKey, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
     public static List<OperationLine> RemoveEntries(IEnumerable<RunEntry> entries, bool dryRun)
     {
-        var targets = entries
-            .DistinctBy(ToIdentityKey, StringComparer.OrdinalIgnoreCase)
+        var targetEntries = entries
+            .DistinctBy(BuildIdentityKey, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        if (targets.Count == 0)
+        if (targetEntries.Count == 0)
         {
             return
             [
@@ -43,20 +49,20 @@ public static class RegistryRunManager
             ];
         }
 
-        var lines = new List<OperationLine>();
+        var operationLines = new List<OperationLine>();
 
-        foreach (var group in targets.GroupBy(x => (x.Hive, x.View)))
+        foreach (var entryGroup in targetEntries.GroupBy(entry => (entry.Hive, entry.View)))
         {
             try
             {
-                using var baseKey = RegistryKey.OpenBaseKey(group.Key.Hive, group.Key.View);
+                using var baseKey = RegistryKey.OpenBaseKey(entryGroup.Key.Hive, entryGroup.Key.View);
                 using var runKey = baseKey.OpenSubKey(RunEntry.RunSubKey, writable: true);
 
                 if (runKey is null)
                 {
-                    foreach (var entry in group)
+                    foreach (var entry in entryGroup)
                     {
-                        lines.Add(new OperationLine
+                        operationLines.Add(new OperationLine
                         {
                             Level = "WARN",
                             Text = $"Registry Run: key not found for {entry.Location} -> {entry.Name}"
@@ -66,11 +72,11 @@ public static class RegistryRunManager
                     continue;
                 }
 
-                foreach (var entry in group)
+                foreach (var entry in entryGroup)
                 {
                     if (dryRun)
                     {
-                        lines.Add(new OperationLine
+                        operationLines.Add(new OperationLine
                         {
                             Level = "OK",
                             Text = $"Registry Run: would remove {entry.Location} -> {entry.Name}"
@@ -79,33 +85,33 @@ public static class RegistryRunManager
                     }
 
                     runKey.DeleteValue(entry.Name, throwOnMissingValue: false);
-                    lines.Add(new OperationLine
+                    operationLines.Add(new OperationLine
                     {
                         Level = "OK",
                         Text = $"Registry Run: removed {entry.Location} -> {entry.Name}"
                     });
                 }
             }
-            catch (Exception ex)
+            catch (Exception exception)
             {
-                lines.Add(new OperationLine
+                operationLines.Add(new OperationLine
                 {
                     Level = "WARN",
-                    Text = $"Registry Run: failed in {FormatLocation(group.Key.Hive, group.Key.View)}: {ex.Message}"
+                    Text = $"Registry Run: failed in {FormatLocation(entryGroup.Key.Hive, entryGroup.Key.View)}: {exception.Message}"
                 });
             }
         }
 
-        return lines;
+        return operationLines;
     }
 
     public static List<OperationLine> RestoreEntries(IEnumerable<RunEntryBackup> entries, bool dryRun)
     {
-        var targets = entries
-            .DistinctBy(ToIdentityKey, StringComparer.OrdinalIgnoreCase)
+        var targetEntries = entries
+            .DistinctBy(BuildIdentityKey, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        if (targets.Count == 0)
+        if (targetEntries.Count == 0)
         {
             return
             [
@@ -113,20 +119,20 @@ public static class RegistryRunManager
             ];
         }
 
-        var lines = new List<OperationLine>();
+        var operationLines = new List<OperationLine>();
 
-        foreach (var group in targets.GroupBy(x => (x.Hive, x.View)))
+        foreach (var entryGroup in targetEntries.GroupBy(entry => (entry.Hive, entry.View)))
         {
             try
             {
-                using var baseKey = RegistryKey.OpenBaseKey(group.Key.Hive, group.Key.View);
+                using var baseKey = RegistryKey.OpenBaseKey(entryGroup.Key.Hive, entryGroup.Key.View);
                 using var runKey = baseKey.CreateSubKey(RunEntry.RunSubKey, writable: true);
 
                 if (runKey is null)
                 {
-                    foreach (var entry in group)
+                    foreach (var entry in entryGroup)
                     {
-                        lines.Add(new OperationLine
+                        operationLines.Add(new OperationLine
                         {
                             Level = "ERR",
                             Text = $"Registry Run: failed to open {FormatLocation(entry.Hive, entry.View)} for restore."
@@ -136,11 +142,11 @@ public static class RegistryRunManager
                     continue;
                 }
 
-                foreach (var entry in group)
+                foreach (var entry in entryGroup)
                 {
                     if (dryRun)
                     {
-                        lines.Add(new OperationLine
+                        operationLines.Add(new OperationLine
                         {
                             Level = "OK",
                             Text = $"Registry Run: would restore {FormatLocation(entry.Hive, entry.View)}\\{RunEntry.RunSubKey} -> {entry.Name}"
@@ -149,71 +155,74 @@ public static class RegistryRunManager
                     }
 
                     runKey.SetValue(entry.Name, entry.Value, RegistryValueKind.String);
-                    lines.Add(new OperationLine
+                    operationLines.Add(new OperationLine
                     {
                         Level = "OK",
                         Text = $"Registry Run: restored {FormatLocation(entry.Hive, entry.View)}\\{RunEntry.RunSubKey} -> {entry.Name}"
                     });
                 }
             }
-            catch (Exception ex)
+            catch (Exception exception)
             {
-                lines.Add(new OperationLine
+                operationLines.Add(new OperationLine
                 {
                     Level = "ERR",
-                    Text = $"Registry Run: restore failed in {FormatLocation(group.Key.Hive, group.Key.View)}: {ex.Message}"
+                    Text = $"Registry Run: restore failed in {FormatLocation(entryGroup.Key.Hive, entryGroup.Key.View)}: {exception.Message}"
                 });
             }
         }
 
-        return lines;
+        return operationLines;
     }
 
     private static IEnumerable<RunEntry> ReadFrom(RegistryHive hive, RegistryView view, string[] patterns)
     {
-        var list = new List<RunEntry>();
-        var matchAll = patterns.Length == 0;
+        var matchingEntries = new List<RunEntry>();
+        var matchEverything = patterns.Length == 0;
 
         try
         {
             using var baseKey = RegistryKey.OpenBaseKey(hive, view);
             using var runKey = baseKey.OpenSubKey(RunEntry.RunSubKey, writable: false);
             if (runKey is null)
-                return list;
+                return matchingEntries;
 
-            foreach (var name in runKey.GetValueNames())
+            foreach (var valueName in runKey.GetValueNames())
             {
-                var value = runKey.GetValue(name)?.ToString() ?? string.Empty;
-                if (matchAll || MatchAny(name, value, patterns))
-                    list.Add(new RunEntry(hive, view, name, value));
+                var valueData = runKey.GetValue(valueName)?.ToString() ?? string.Empty;
+                if (matchEverything || MatchesAnyPattern(valueName, valueData, patterns))
+                    matchingEntries.Add(new RunEntry(hive, view, valueName, valueData));
             }
         }
         catch
         {
-            // Keep non-fatal.
+            // A blocked hive should not stop the rest of the discovery pass.
         }
 
-        return list;
+        return matchingEntries;
     }
 
     private static string FormatLocation(RegistryHive hive, RegistryView view)
         => $"{(hive == RegistryHive.CurrentUser ? "HKCU" : "HKLM")}({view})";
 
-    private static string ToIdentityKey(RunEntry entry)
+    private static string BuildIdentityKey(RunEntry entry)
         => $"{entry.Hive}|{entry.View}|{entry.Name}";
 
-    private static string ToIdentityKey(RunEntryBackup entry)
+    private static string BuildIdentityKey(RunEntryBackup entry)
         => $"{entry.Hive}|{entry.View}|{entry.Name}";
 
-    private static bool MatchAny(string valueName, string valueData, string[] patterns)
-        => patterns.Any(p => WildMatch(valueName, p) || WildMatch(valueData, p));
+    private static bool MatchesAnyPattern(string valueName, string valueData, string[] patterns)
+        => patterns.Any(pattern => WildcardMatch(valueName, pattern) || WildcardMatch(valueData, pattern));
 
-    private static bool WildMatch(string input, string pattern)
+    private static bool WildcardMatch(string input, string pattern)
     {
         var regex = "^" + System.Text.RegularExpressions.Regex.Escape(pattern)
             .Replace("\\*", ".*")
             .Replace("\\?", ".") + "$";
 
-        return System.Text.RegularExpressions.Regex.IsMatch(input ?? string.Empty, regex, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            input ?? string.Empty,
+            regex,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 }

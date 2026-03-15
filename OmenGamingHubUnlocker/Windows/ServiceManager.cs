@@ -3,9 +3,19 @@ using OmenGamingHubUnlocker.Core;
 
 namespace OmenGamingHubUnlocker.Windows;
 
+/// <summary>
+/// Snapshot of a Windows service that the unlocker may inspect or modify.
+/// </summary>
 public sealed record ServiceItem(string Name, string DisplayName, string StartMode);
+
+/// <summary>
+/// Describes the desired startup mode for a specific service.
+/// </summary>
 public sealed record ServiceStartModeTarget(string Name, string DesiredStartMode);
 
+/// <summary>
+/// Encapsulates WMI-based service discovery and startup mode changes.
+/// </summary>
 public static class ServiceManager
 {
     public static (bool ok, string details) CheckCapability()
@@ -16,38 +26,38 @@ public static class ServiceManager
             _ = searcher.Get().Count;
             return (true, "WMI query ok.");
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            return (false, ex.Message);
+            return (false, exception.Message);
         }
     }
 
     public static List<ServiceItem> QueryServices(string[] patterns)
     {
-        var list = new List<ServiceItem>();
-        var matchAll = patterns.Length == 0;
+        var matchingServices = new List<ServiceItem>();
+        var matchEverything = patterns.Length == 0;
 
         using var searcher = new ManagementObjectSearcher("SELECT Name, DisplayName, StartMode FROM Win32_Service");
-        foreach (ManagementObject mo in searcher.Get())
+        foreach (ManagementObject serviceObject in searcher.Get())
         {
-            var name = (string)(mo["Name"] ?? string.Empty);
-            var displayName = (string)(mo["DisplayName"] ?? string.Empty);
-            var startMode = (string)(mo["StartMode"] ?? string.Empty);
+            var serviceName = (string)(serviceObject["Name"] ?? string.Empty);
+            var serviceDisplayName = (string)(serviceObject["DisplayName"] ?? string.Empty);
+            var serviceStartMode = (string)(serviceObject["StartMode"] ?? string.Empty);
 
-            if (matchAll || patterns.Any(p => WildMatch(name, p) || WildMatch(displayName, p)))
-                list.Add(new ServiceItem(name, displayName, startMode));
+            if (matchEverything || patterns.Any(pattern => WildcardMatch(serviceName, pattern) || WildcardMatch(serviceDisplayName, pattern)))
+                matchingServices.Add(new ServiceItem(serviceName, serviceDisplayName, serviceStartMode));
         }
 
-        return list;
+        return matchingServices;
     }
 
     public static List<OperationLine> ApplyStartModeTargets(IEnumerable<ServiceStartModeTarget> targets, bool dryRun)
     {
-        var targetMap = targets
-            .DistinctBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(x => x.Name, x => x.DesiredStartMode, StringComparer.OrdinalIgnoreCase);
+        var requestedTargets = targets
+            .DistinctBy(target => target.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(target => target.Name, target => target.DesiredStartMode, StringComparer.OrdinalIgnoreCase);
 
-        if (targetMap.Count == 0)
+        if (requestedTargets.Count == 0)
         {
             return
             [
@@ -56,77 +66,77 @@ public static class ServiceManager
         }
 
         var currentServices = QueryServices(Array.Empty<string>())
-            .Where(s => targetMap.ContainsKey(s.Name))
-            .ToDictionary(s => s.Name, s => s, StringComparer.OrdinalIgnoreCase);
+            .Where(service => requestedTargets.ContainsKey(service.Name))
+            .ToDictionary(service => service.Name, service => service, StringComparer.OrdinalIgnoreCase);
 
-        var lines = new List<OperationLine>();
+        var operationLines = new List<OperationLine>();
 
-        foreach (var (name, desiredMode) in targetMap.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
+        foreach (var (serviceName, desiredStartMode) in requestedTargets.OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase))
         {
-            if (!currentServices.TryGetValue(name, out var service))
+            if (!currentServices.TryGetValue(serviceName, out var currentService))
             {
-                lines.Add(new OperationLine { Level = "WARN", Text = $"Services: {name} was not found." });
+                operationLines.Add(new OperationLine { Level = "WARN", Text = $"Services: {serviceName} was not found." });
                 continue;
             }
 
-            if (service.StartMode.Equals(desiredMode, StringComparison.OrdinalIgnoreCase))
+            if (currentService.StartMode.Equals(desiredStartMode, StringComparison.OrdinalIgnoreCase))
             {
-                lines.Add(new OperationLine { Level = "INFO", Text = $"Services: {name} already set to {desiredMode}." });
+                operationLines.Add(new OperationLine { Level = "INFO", Text = $"Services: {serviceName} already set to {desiredStartMode}." });
                 continue;
             }
 
             if (dryRun)
             {
-                lines.Add(new OperationLine
+                operationLines.Add(new OperationLine
                 {
                     Level = "OK",
-                    Text = $"Services: would set {name} -> {desiredMode} (was {service.StartMode})"
+                    Text = $"Services: would set {serviceName} -> {desiredStartMode} (was {currentService.StartMode})"
                 });
                 continue;
             }
 
             try
             {
-                using var mo = new ManagementObject($"Win32_Service.Name='{name}'");
-                var result = mo.InvokeMethod("ChangeStartMode", new object[] { desiredMode });
-                var code = ConvertToWmiReturnCode(result);
+                using var serviceObject = new ManagementObject($"Win32_Service.Name='{serviceName}'");
+                var wmiResult = serviceObject.InvokeMethod("ChangeStartMode", new object[] { desiredStartMode });
+                var wmiReturnCode = ConvertToWmiReturnCode(wmiResult);
 
-                if (code == 0)
+                if (wmiReturnCode == 0)
                 {
-                    lines.Add(new OperationLine { Level = "OK", Text = $"Services: set {name} -> {desiredMode}" });
+                    operationLines.Add(new OperationLine { Level = "OK", Text = $"Services: set {serviceName} -> {desiredStartMode}" });
                     continue;
                 }
 
-                var fallback = TryApplyWithSc(name, desiredMode, out var fallbackError);
-                lines.Add(new OperationLine
+                var fallbackApplied = TryApplyWithSc(serviceName, desiredStartMode, out var fallbackError);
+                operationLines.Add(new OperationLine
                 {
-                    Level = fallback ? "WARN" : "ERR",
-                    Text = fallback
-                        ? $"Services: WMI returned {code} for {name}, sc.exe fallback applied."
-                        : $"Services: failed to set {name}. WMI returned {code}. sc.exe error: {fallbackError}"
+                    Level = fallbackApplied ? "WARN" : "ERR",
+                    Text = fallbackApplied
+                        ? $"Services: WMI returned {wmiReturnCode} for {serviceName}, sc.exe fallback applied."
+                        : $"Services: failed to set {serviceName}. WMI returned {wmiReturnCode}. sc.exe error: {fallbackError}"
                 });
             }
-            catch (Exception ex)
+            catch (Exception exception)
             {
-                var fallback = TryApplyWithSc(name, desiredMode, out var fallbackError);
-                lines.Add(new OperationLine
+                var fallbackApplied = TryApplyWithSc(serviceName, desiredStartMode, out var fallbackError);
+                operationLines.Add(new OperationLine
                 {
-                    Level = fallback ? "WARN" : "ERR",
-                    Text = fallback
-                        ? $"Services: WMI failed for {name}, sc.exe fallback applied."
-                        : $"Services: failed to set {name}. WMI error: {ex.Message}. sc.exe error: {fallbackError}"
+                    Level = fallbackApplied ? "WARN" : "ERR",
+                    Text = fallbackApplied
+                        ? $"Services: WMI failed for {serviceName}, sc.exe fallback applied."
+                        : $"Services: failed to set {serviceName}. WMI error: {exception.Message}. sc.exe error: {fallbackError}"
                 });
             }
         }
 
-        return lines;
+        return operationLines;
     }
 
-    private static bool TryApplyWithSc(string serviceName, string desiredMode, out string error)
+    private static bool TryApplyWithSc(string serviceName, string desiredStartMode, out string error)
     {
-        var scMode = desiredMode.Equals("Manual", StringComparison.OrdinalIgnoreCase) ? "demand" :
-                     desiredMode.Equals("Automatic", StringComparison.OrdinalIgnoreCase) ? "auto" :
-                     desiredMode.Equals("Disabled", StringComparison.OrdinalIgnoreCase) ? "disabled" : "demand";
+        var scMode = desiredStartMode.Equals("Manual", StringComparison.OrdinalIgnoreCase) ? "demand" :
+                     desiredStartMode.Equals("Automatic", StringComparison.OrdinalIgnoreCase) ? "auto" :
+                     desiredStartMode.Equals("Disabled", StringComparison.OrdinalIgnoreCase) ? "disabled" : "demand";
 
         return PowerShellRunner.TryRun("sc.exe", $"config \"{serviceName}\" start= {scMode}", out _, out error, 20_000);
     }
@@ -143,12 +153,15 @@ public static class ServiceManager
         }
     }
 
-    private static bool WildMatch(string input, string pattern)
+    private static bool WildcardMatch(string input, string pattern)
     {
         var regex = "^" + System.Text.RegularExpressions.Regex.Escape(pattern)
             .Replace("\\*", ".*")
             .Replace("\\?", ".") + "$";
 
-        return System.Text.RegularExpressions.Regex.IsMatch(input ?? string.Empty, regex, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            input ?? string.Empty,
+            regex,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 }
