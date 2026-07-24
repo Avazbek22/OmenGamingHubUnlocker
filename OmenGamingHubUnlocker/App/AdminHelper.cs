@@ -34,10 +34,12 @@ public static class AdminHelper
             var processStartInfo = new ProcessStartInfo
             {
                 FileName = executablePath,
-                Arguments = BuildArgumentString(arguments),
                 UseShellExecute = true,
                 Verb = "runas"
             };
+
+            foreach (var argument in arguments)
+                processStartInfo.ArgumentList.Add(argument);
 
             Process.Start(processStartInfo);
             return true;
@@ -53,19 +55,4 @@ public static class AdminHelper
         }
     }
 
-    private static string BuildArgumentString(string[] arguments)
-        => arguments.Length == 0
-            ? string.Empty
-            : string.Join(" ", arguments.Select(QuoteIfNeeded));
-
-    private static string QuoteIfNeeded(string argument)
-    {
-        if (string.IsNullOrWhiteSpace(argument))
-            return "\"\"";
-
-        if (argument.Any(char.IsWhiteSpace) || argument.Contains('"'))
-            return "\"" + argument.Replace("\"", "\\\"") + "\"";
-
-        return argument;
-    }
 }

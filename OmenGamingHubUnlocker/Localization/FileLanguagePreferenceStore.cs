@@ -5,6 +5,11 @@ namespace OmenGamingHubUnlocker.Localization;
 /// </summary>
 public sealed class FileLanguagePreferenceStore(string? settingsFilePath = null) : ILanguagePreferenceStore
 {
+    private static readonly JsonSerializerOptions SerializerOptions = new()
+    {
+        WriteIndented = true
+    };
+
     private readonly string _settingsFilePath = string.IsNullOrWhiteSpace(settingsFilePath)
         ? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -40,7 +45,7 @@ public sealed class FileLanguagePreferenceStore(string? settingsFilePath = null)
             Directory.CreateDirectory(directoryPath);
 
             var settings = new LanguageSettings(ToLanguageCode(language));
-            var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
+            var json = JsonSerializer.Serialize(settings, SerializerOptions);
             File.WriteAllText(_settingsFilePath, json);
         }
         catch

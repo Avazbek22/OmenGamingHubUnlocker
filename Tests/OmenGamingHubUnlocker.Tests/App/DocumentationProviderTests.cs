@@ -9,8 +9,9 @@ public sealed class DocumentationProviderTests
 
         Assert.NotEmpty(lines);
         Assert.Contains(lines, line => line.Contains("Menu guide:", StringComparison.Ordinal));
-        Assert.Contains(lines, line => line.Contains("It does not uninstall OMEN.", StringComparison.Ordinal));
-        Assert.Contains(lines, line => line.Contains("Simple recommendation:", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.Contains("It does not uninstall OMEN or remove drivers.", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.Contains("Safety check (no changes)", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.Contains("Restore original settings", StringComparison.Ordinal));
     }
 
     [Fact]

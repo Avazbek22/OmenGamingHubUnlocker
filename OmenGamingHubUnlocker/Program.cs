@@ -14,11 +14,14 @@ try
 
     var applicationInfo = AppInfo.Create();
 
-    // The manifest already asks for elevation, but the runtime check keeps the failure explicit.
     if (!applicationInfo.IsAdministrator)
     {
+        if (AdminHelper.TryRelaunchAsAdministrator(applicationInfo.ExePath, args))
+            return;
+
         Console.WriteLine(Text.Get("program.adminRequired"));
-        Environment.Exit(1);
+        Environment.ExitCode = 1;
+        return;
     }
 
     var unlockerEngine = new UnlockerEngine();

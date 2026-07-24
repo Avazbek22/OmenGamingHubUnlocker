@@ -3,45 +3,60 @@ namespace OmenGamingHubUnlocker.Tests.Windows;
 public sealed class ProcessManagerTests
 {
     [Fact]
-    public void FindMatchingProcesses_ShouldNeverReturnCurrentTestHostProcess()
+    public void QueryTargetProcesses_ShouldNeverReturnCurrentTestHostProcess()
     {
         var currentProcess = Process.GetCurrentProcess();
 
-        var matches = ProcessManager.FindMatchingProcesses([$"*{currentProcess.ProcessName}*"]);
+        var matches = ProcessManager.QueryTargetProcesses([$"*{currentProcess.ProcessName}*"], []);
 
         Assert.DoesNotContain(matches, process => process.Id == currentProcess.Id);
     }
 
     [Fact]
-    public void FindMatchingProcesses_ShouldFindSpawnedChildProcess()
+    public void QueryTargetProcesses_ShouldFindSpawnedChildProcess()
     {
         using var childProcess = ChildProcessScope.StartUniqueNamedWaitProcess();
 
-        var matches = ProcessManager.FindMatchingProcesses([$"*{childProcess.ExpectedProcessName}*"]);
+        var matches = ProcessManager.QueryTargetProcesses([$"*{childProcess.ExpectedProcessName}*"], []);
 
         Assert.Contains(matches, process => process.Id == childProcess.Process.Id);
     }
 
     [Fact]
-    public void TryKillMatchingProcesses_WithDryRun_ShouldNotTerminateChildProcess()
+    public void TerminateTargetProcesses_WithDryRun_ShouldNotTerminateChildProcess()
     {
         using var childProcess = ChildProcessScope.StartUniqueNamedWaitProcess();
 
-        var killed = ProcessManager.TryKillMatchingProcesses([$"*{childProcess.ExpectedProcessName}*"], dryRun: true);
+        var lines = ProcessManager.TerminateTargetProcesses(
+            [$"*{childProcess.ExpectedProcessName}*"],
+            [],
+            dryRun: true);
 
-        Assert.Contains(killed, label => label.Contains(childProcess.Process.Id.ToString(), StringComparison.Ordinal));
+        Assert.Contains(
+            lines,
+            line => line.Text.Contains(
+                childProcess.Process.Id.ToString(CultureInfo.InvariantCulture),
+                StringComparison.Ordinal));
         Assert.False(childProcess.Process.HasExited);
     }
 
     [Fact]
-    public void TryKillMatchingProcesses_ShouldTerminateSpawnedChildProcess()
+    public void TerminateTargetProcesses_ShouldTerminateSpawnedChildProcess()
     {
         using var childProcess = ChildProcessScope.StartUniqueNamedWaitProcess();
 
-        var killed = ProcessManager.TryKillMatchingProcesses([$"*{childProcess.ExpectedProcessName}*"], dryRun: false);
+        var lines = ProcessManager.TerminateTargetProcesses(
+            [$"*{childProcess.ExpectedProcessName}*"],
+            [],
+            dryRun: false);
         childProcess.Process.WaitForExit(5_000);
 
-        Assert.Contains(killed, label => label.Contains(childProcess.Process.Id.ToString(), StringComparison.Ordinal));
+        Assert.Contains(
+            lines,
+            line => line.Text.Contains(
+                childProcess.Process.Id.ToString(CultureInfo.InvariantCulture),
+                StringComparison.Ordinal));
+        Assert.DoesNotContain(lines, line => line.Level == "ERR");
         Assert.True(childProcess.Process.HasExited);
     }
 }

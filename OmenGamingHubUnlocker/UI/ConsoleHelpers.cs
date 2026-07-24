@@ -156,6 +156,8 @@ public static class ConsoleHelpers
 
     public static void PrintOperationLinesAnimated(IEnumerable<OperationLine> lines)
     {
+        using var cursorVisibility = HideCursorForAnimation();
+
         foreach (var line in lines)
         {
             DelayBeforeNextLine();
@@ -166,12 +168,16 @@ public static class ConsoleHelpers
 
     public static void PrintLinesAnimated(IEnumerable<string> lines, ConsoleColor color = ConsoleColor.Gray)
     {
+        using var cursorVisibility = HideCursorForAnimation();
+
         foreach (var line in lines)
         {
             DelayBeforeNextLine();
             WithColor(color, () => Console.WriteLine(line));
         }
     }
+
+    internal static IDisposable HideCursorForAnimation() => new CursorVisibilityScope();
 
     /// <summary>
     /// Prints a single key/value pair with separate colors for the label and the value.
@@ -222,5 +228,47 @@ public static class ConsoleHelpers
 
         if (totalDelay > 0)
             Thread.Sleep(totalDelay);
+    }
+
+    private sealed class CursorVisibilityScope : IDisposable
+    {
+        private bool? originalVisibility;
+        private bool isDisposed;
+
+        public CursorVisibilityScope()
+        {
+            if (Console.IsOutputRedirected)
+                return;
+
+            try
+            {
+                originalVisibility = Console.CursorVisible;
+                Console.CursorVisible = false;
+            }
+            catch
+            {
+                // Cursor control is optional because not every Windows terminal implements it.
+                originalVisibility = null;
+            }
+        }
+
+        public void Dispose()
+        {
+            if (isDisposed)
+                return;
+
+            isDisposed = true;
+            if (originalVisibility is null)
+                return;
+
+            try
+            {
+                Console.CursorVisible = originalVisibility.Value;
+            }
+            catch
+            {
+                // A closing terminal must not turn successful application work into a failure.
+            }
+        }
     }
 }

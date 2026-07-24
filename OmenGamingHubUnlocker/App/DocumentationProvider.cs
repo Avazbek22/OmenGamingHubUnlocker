@@ -29,7 +29,7 @@ public static class DocumentationProvider
         }
     }
 
-    private static IReadOnlyDictionary<(DocumentationDocument Document, AppLanguage Language), string[]> LoadDocuments()
+    private static Dictionary<(DocumentationDocument Document, AppLanguage Language), string[]> LoadDocuments()
     {
         return new Dictionary<(DocumentationDocument Document, AppLanguage Language), string[]>
         {

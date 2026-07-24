@@ -1,43 +1,40 @@
-This tool helps you keep OMEN Gaming Hub under control.
+This app helps you keep OMEN Gaming Hub under control.
 
-It does not uninstall OMEN.
-It does not remove your drivers.
-It mainly changes startup behavior and network access for OMEN.
+It does not uninstall OMEN or remove drivers. It limits OMEN background startup and network access while preserving the original settings for recovery.
 
 Menu guide:
- - Check status: shows what is active right now.
- - Dry run: preview only. It changes nothing.
- - Activate scripts: applies the main protection profile.
- - Disable scripts: removes this tool's blocks and restores saved startup settings.
- - Reset Omen Gaming Hub & Activate scripts: resets the OMEN app and immediately applies protection again.
+ - Check status: shows the current state of every managed component.
+ - Safety check (no changes): inspects the system and shows an exact action plan without changing anything.
+ - Activate protection: applies the main protection profile.
+ - Restore original settings: reverses the app's changes using the saved backup.
+ - Reset OMEN and reapply protection: runs the Windows app reset and immediately restores protection.
  - Help: opens this page.
- - About: short project information.
+ - About: shows brief project information.
  - Change language: switches between English and Russian.
 
-What Activate scripts does:
- - Puts OMEN-related services into a safer startup mode.
- - Disables OMEN scheduled tasks.
- - Removes OMEN autostart entries from Run keys.
- - Adds Windows Firewall rules for OMEN executables.
- - Adds hosts-file blocks for known OMEN domains.
+What Activate protection does:
+ - Blocks network access for the current OMEN package and executables.
+ - Sets OMEN services to Manual and stops them.
+ - Disables and stops OMEN scheduled tasks.
+ - Terminates active OMEN background processes.
+ - Removes OMEN entries from registry startup.
+ - Blocks known OMEN domains through the hosts file.
+ - Rechecks the system to ensure background components stay stopped.
 
-What Reset Omen Gaming Hub & Activate scripts does:
- - Closes OMEN-related processes.
- - Runs the same app reset that Windows Settings uses.
- - Clears the OMEN app data.
- - Immediately applies protection again after the reset.
+What Reset OMEN does:
+ - Isolates OMEN from the network before the reset.
+ - Runs the same app reset available in Windows Settings.
+ - Clears OMEN's local app data.
+ - Rediscovers the package and background components after the reset.
+ - Reapplies and verifies protection.
 
 Good to know:
- - Dry run is the safest first step if you just want to inspect.
- - Activate is the normal everyday option.
- - Reset is useful after an OMEN update or when OMEN gets stuck.
- - Disable is useful only if you want to undo this tool's changes.
- - Administrator rights are required for real changes.
-
-Simple recommendation:
- - New user: start with Dry run or Check status.
- - Normal use: run Activate scripts.
- - OMEN updated or broke: run Reset Omen Gaming Hub & Activate scripts.
+ - Start with Check status or Safety check if this is your first time using the app.
+ - Use Activate protection for normal operation.
+ - If OMEN updated or stopped working, use Reset OMEN and reapply protection.
+ - Use Restore original settings to reverse all managed changes.
+ - Applying changes requires administrator access.
+ - If elevation uses another account, the operation stops safely instead of changing the wrong user profile.
 
 Project page:
  - https://github.com/Avazbek22/OmenGamingHubUnlocker

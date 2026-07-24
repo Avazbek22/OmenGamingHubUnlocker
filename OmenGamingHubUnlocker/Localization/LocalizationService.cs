@@ -51,7 +51,7 @@ public sealed class LocalizationService
     public string Format(string key, params object?[] arguments)
         => string.Format(CultureInfo.CurrentCulture, Get(key), arguments);
 
-    private static IReadOnlyDictionary<AppLanguage, IReadOnlyDictionary<string, string>> LoadResources()
+    private static Dictionary<AppLanguage, IReadOnlyDictionary<string, string>> LoadResources()
     {
         return new Dictionary<AppLanguage, IReadOnlyDictionary<string, string>>
         {
@@ -60,7 +60,7 @@ public sealed class LocalizationService
         };
     }
 
-    private static IReadOnlyDictionary<string, string> LoadLanguageResources(string languageCode)
+    private static Dictionary<string, string> LoadLanguageResources(string languageCode)
     {
         var assembly = typeof(LocalizationService).Assembly;
         var resourceName = assembly

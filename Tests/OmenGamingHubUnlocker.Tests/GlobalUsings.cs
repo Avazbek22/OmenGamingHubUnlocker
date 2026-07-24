@@ -1,6 +1,8 @@
 global using Microsoft.Win32;
 global using System.Diagnostics;
+global using System.Globalization;
 global using System.Text;
+global using System.Text.Json;
 global using OmenGamingHubUnlocker.App;
 global using OmenGamingHubUnlocker.Core;
 global using OmenGamingHubUnlocker.Localization;

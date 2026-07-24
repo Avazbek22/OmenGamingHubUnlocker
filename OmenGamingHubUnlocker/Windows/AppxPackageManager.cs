@@ -40,8 +40,14 @@ Get-AppxPackage |
     ConvertTo-Json -Compress
 """;
 
-        var commandSucceeded = TryRunPowerShell(script, out var standardOutput, out _, 30_000);
-        if (!commandSucceeded || string.IsNullOrWhiteSpace(standardOutput))
+        var commandSucceeded = TryRunPowerShell(script, out var standardOutput, out var standardError, 30_000);
+        if (!commandSucceeded)
+        {
+            throw new InvalidOperationException(
+                $"AppX package discovery failed: {FirstNonEmpty(standardError, standardOutput, Text.Get("manager.appx.unknownError"))}");
+        }
+
+        if (string.IsNullOrWhiteSpace(standardOutput))
             return [];
 
         try
@@ -56,25 +62,36 @@ Get-AppxPackage |
                 .ThenBy(package => package.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
-        catch
+        catch (Exception exception)
         {
-            return [];
+            throw new InvalidOperationException(
+                $"AppX package metadata could not be parsed: {exception.Message}",
+                exception);
         }
     }
 
     public static bool TryGetPrimaryPackage(string[] filters, out AppxPackageInfo? package, out string details)
     {
-        var packages = QueryPackages(filters);
-        package = packages.FirstOrDefault();
-
-        if (package is null)
+        try
         {
-            details = Text.Get("manager.appx.packageNotFound");
+            var packages = QueryPackages(filters);
+            package = packages.FirstOrDefault();
+
+            if (package is null)
+            {
+                details = Text.Get("manager.appx.packageNotFound");
+                return false;
+            }
+
+            details = $"{package.Name} ({package.PackageFullName})";
+            return true;
+        }
+        catch (Exception exception)
+        {
+            package = null;
+            details = exception.Message;
             return false;
         }
-
-        details = $"{package.Name} ({package.PackageFullName})";
-        return true;
     }
 
     /// <summary>
@@ -86,7 +103,11 @@ Get-AppxPackage |
 
         if (!TryGetPrimaryPackage(filters, out var package, out var packageDescription) || package is null)
         {
-            lines.Add(LocalizedLine.Err("manager.appx.packageNotFound"));
+            lines.Add(packageDescription.Equals(
+                    Text.Get("manager.appx.packageNotFound"),
+                    StringComparison.Ordinal)
+                ? LocalizedLine.Err("manager.appx.packageNotFound")
+                : LocalizedLine.Err("manager.appx.packageLookupFailed", packageDescription));
             return lines;
         }
 

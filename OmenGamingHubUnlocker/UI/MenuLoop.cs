@@ -96,8 +96,10 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
         ConsoleHelpers.TryClearScreen();
         RenderScreenHeader(Text.Get("screen.status"));
 
-        var statusReport = engine.GetStatusReport();
-        PrintStatusReport(statusReport, ConsoleTable.StatusIntent.Neutral, showResultColumn: false, predictive: false);
+        var statusReport = ConsoleActivityIndicator.Run(
+            Text.Get("activity.status"),
+            engine.GetStatusReport);
+        PrintStatusReport(statusReport, ConsoleTable.StatusIntent.Neutral, showResultColumn: true, predictive: false);
         ConsoleHelpers.Pause();
     }
 
@@ -123,7 +125,9 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
         ConsoleHelpers.TryClearScreen();
         RenderScreenHeader(Text.Get("screen.dryRun"));
 
-        var operationReport = engine.RunDryRunDeep();
+        var operationReport = ConsoleActivityIndicator.Run(
+            Text.Get("activity.dryRun"),
+            engine.RunDryRunDeep);
         PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterActivate, showResultColumn: true, predictive: true);
         ConsoleHelpers.Pause();
     }
@@ -150,7 +154,9 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
         ConsoleHelpers.TryClearScreen();
         RenderScreenHeader(Text.Get("screen.activation"));
 
-        var operationReport = engine.Activate(UnlockerOptions.ForActivate());
+        var operationReport = ConsoleActivityIndicator.Run(
+            Text.Get("activity.activate"),
+            () => engine.Activate(UnlockerOptions.ForActivate()));
         PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterActivate, showResultColumn: true, predictive: false);
         ConsoleHelpers.Pause();
     }
@@ -174,7 +180,9 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
         ConsoleHelpers.TryClearScreen();
         RenderScreenHeader(Text.Get("screen.disable"));
 
-        var operationReport = engine.Disable(UnlockerOptions.ForDisable());
+        var operationReport = ConsoleActivityIndicator.Run(
+            Text.Get("activity.disable"),
+            () => engine.Disable(UnlockerOptions.ForDisable()));
         PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterDisable, showResultColumn: true, predictive: false);
         ConsoleHelpers.Pause();
     }
@@ -201,15 +209,17 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
         ConsoleHelpers.TryClearScreen();
         RenderScreenHeader(Text.Get("screen.resetOmenApp"));
 
-        var operationReport = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
+        var operationReport = ConsoleActivityIndicator.Run(
+            Text.Get("activity.reset"),
+            () => engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply()));
         PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterActivate, showResultColumn: true, predictive: false);
         ConsoleHelpers.Pause();
     }
 
-    private void ShowAbout()
+    private static void ShowAbout()
         => ShowDocumentationScreen(Text.Get("screen.about"), DocumentationDocument.About);
 
-    private void ShowHelp()
+    private static void ShowHelp()
         => ShowDocumentationScreen(Text.Get("screen.help"), DocumentationDocument.Help);
 
     private static void ShowDocumentationScreen(string title, DocumentationDocument document)

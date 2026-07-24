@@ -1,79 +1,131 @@
 namespace OmenGamingHubUnlocker.Windows;
 
 /// <summary>
+/// Immutable process metadata used after native process handles have been released.
+/// </summary>
+public sealed record ProcessItem(int Id, string Name, string ExecutablePath)
+{
+    public string Label => $"{Name} (PID {Id})";
+}
+
+/// <summary>
 /// Provides process discovery and termination helpers for OMEN-related executables.
 /// </summary>
 public static class ProcessManager
 {
-    public static List<Process> FindMatchingProcesses(string[] patterns)
+    public static List<ProcessItem> QueryTargetProcesses(
+        IEnumerable<string> namePatterns,
+        IEnumerable<string> trustedExecutablePaths)
     {
-        var matchingProcesses = new List<Process>();
+        var normalizedPaths = trustedExecutablePaths
+            .Select(TryNormalizePath)
+            .Where(path => path is not null)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var targetProcesses = new List<ProcessItem>();
         var currentProcessId = Environment.ProcessId;
 
         foreach (var process in Process.GetProcesses())
         {
-            try
+            using (process)
             {
-                // Never report or terminate the unlocker process itself even if its name matches an OMEN pattern.
-                if (process.Id == currentProcessId)
-                    continue;
+                try
+                {
+                    if (process.Id == currentProcessId)
+                        continue;
 
-                if (patterns.Any(pattern => WildcardMatch(process.ProcessName, pattern)))
-                    matchingProcesses.Add(process);
-            }
-            catch
-            {
-                // Some system processes deny metadata access; ignoring them keeps discovery best-effort.
+                    var executablePath = TryGetExecutablePath(process);
+                    var normalizedExecutablePath = TryNormalizePath(executablePath);
+                    var matchesKnownName = namePatterns.Any(pattern => WildcardMatcher.IsMatch(process.ProcessName, pattern));
+                    var matchesDiscoveredPath = normalizedExecutablePath is not null && normalizedPaths.Contains(normalizedExecutablePath);
+
+                    if (matchesKnownName || matchesDiscoveredPath)
+                        targetProcesses.Add(new ProcessItem(process.Id, process.ProcessName, executablePath));
+                }
+                catch
+                {
+                    // A process can exit between enumeration and inspection.
+                }
             }
         }
 
-        return matchingProcesses
-            .GroupBy(process => process.Id)
-            .Select(group => group.First())
-            .OrderBy(process => process.ProcessName, StringComparer.OrdinalIgnoreCase)
+        return targetProcesses
+            .DistinctBy(process => process.Id)
+            .OrderBy(process => process.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(process => process.Id)
             .ToList();
     }
 
-    public static List<string> TryKillMatchingProcesses(string[] patterns, bool dryRun)
+    public static List<OperationLine> TerminateTargetProcesses(
+        IEnumerable<string> namePatterns,
+        IEnumerable<string> trustedExecutablePaths,
+        bool dryRun)
     {
-        var affectedProcesses = new List<string>();
-        var matchingProcesses = FindMatchingProcesses(patterns);
+        var lines = new List<OperationLine>();
+        var targetProcesses = QueryTargetProcesses(namePatterns, trustedExecutablePaths);
 
-        foreach (var process in matchingProcesses)
+        if (targetProcesses.Count == 0)
         {
-            var processLabel = $"{process.ProcessName} (PID {process.Id})";
+            lines.Add(LocalizedLine.Info("manager.processes.noneRunning"));
+            return lines;
+        }
+
+        foreach (var target in targetProcesses)
+        {
             if (dryRun)
             {
-                affectedProcesses.Add(processLabel);
+                lines.Add(LocalizedLine.Ok("manager.processes.wouldTerminate", target.Label));
                 continue;
             }
 
             try
             {
+                using var process = Process.GetProcessById(target.Id);
                 process.Kill(entireProcessTree: true);
-                affectedProcesses.Add(processLabel);
+
+                if (!process.WaitForExit(10_000))
+                {
+                    lines.Add(LocalizedLine.Err("manager.processes.didNotExit", target.Label));
+                    continue;
+                }
+
+                lines.Add(LocalizedLine.Ok("manager.processes.terminated", target.Label));
             }
-            catch
+            catch (ArgumentException)
             {
-                // Process termination is best-effort; the engine reports counts, not per-process failures.
+                // Exiting before termination is already the desired state.
+                lines.Add(LocalizedLine.Ok("manager.processes.alreadyExited", target.Label));
+            }
+            catch (Exception exception)
+            {
+                lines.Add(LocalizedLine.Err("manager.processes.failedToTerminate", target.Label, exception.Message));
             }
         }
 
-        return affectedProcesses;
+        return lines;
     }
 
-    private static bool WildcardMatch(string input, string pattern)
+    private static string TryGetExecutablePath(Process process)
     {
-        var safeInput = input ?? string.Empty;
-        var safePattern = pattern ?? string.Empty;
+        try
+        {
+            return process.MainModule?.FileName ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
 
-        var regex = "^" + System.Text.RegularExpressions.Regex.Escape(safePattern)
-            .Replace("\\*", ".*")
-            .Replace("\\?", ".") + "$";
-
-        return System.Text.RegularExpressions.Regex.IsMatch(
-            safeInput,
-            regex,
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    private static string? TryNormalizePath(string? path)
+    {
+        try
+        {
+            return string.IsNullOrWhiteSpace(path) ? null : Path.GetFullPath(path);
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

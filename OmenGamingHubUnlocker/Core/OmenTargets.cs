@@ -22,17 +22,12 @@ public static class OmenTargets
     ];
 
     /// <summary>
-    /// Service display names and service names that should be switched to manual mode.
+    /// Service identities that are owned by OMEN and can be safely constrained.
     /// </summary>
     public static readonly string[] ServicePatterns =
     [
-        "*OMEN*",
-        "*Omen*",
-        "*HP OMEN*",
-        "*HPGaming*",
-        "*HP Gaming*",
-        "*HPGame*",
-        "*HPSupportAssistant*"
+        "HPOmenCap",
+        "*OMEN*"
     ];
 
     /// <summary>
@@ -40,12 +35,9 @@ public static class OmenTargets
     /// </summary>
     public static readonly string[] TaskPatterns =
     [
-        "*Omen*",
         "*OMEN*",
         "*HP.OMEN*",
-        "*OMEN Gaming*",
-        "*HP Support Assistant*",
-        "*HPSupportAssistant*"
+        "*OMEN Gaming*"
     ];
 
     /// <summary>
@@ -54,11 +46,8 @@ public static class OmenTargets
     public static readonly string[] RunEntryPatterns =
     [
         "*OMEN*",
-        "*Omen*",
         "*OMENCommandCenter*",
-        "*OMENGamingHub*",
-        "*HP Support Assistant*",
-        "*HPSupportAssistant*"
+        "*OMENGamingHub*"
     ];
 
     /// <summary>
@@ -66,11 +55,11 @@ public static class OmenTargets
     /// </summary>
     public static readonly string[] ProcessNamePatterns =
     [
-        "*Omen*",
         "*OMEN*",
         "*OMENCommandCenter*",
         "*OMENGamingHub*",
-        "*HPSupportAssistant*"
+        "OverlayHelper",
+        "HP.Omen.Application.Background.Tasks.Container"
     ];
 
     /// <summary>
@@ -91,6 +80,8 @@ public static class OmenTargets
     [
         @"HP\OMEN Gaming Hub",
         @"HP Inc\OMEN Gaming Hub",
-        @"HP\OMENCommandCenter"
+        @"HP\OMENCommandCenter",
+        @"HP\OmenInstallMonitor",
+        @"HP\Overlay"
     ];
 }

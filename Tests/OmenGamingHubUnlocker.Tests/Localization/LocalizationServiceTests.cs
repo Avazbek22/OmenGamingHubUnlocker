@@ -10,7 +10,7 @@ public sealed class LocalizationServiceTests
         var service = new LocalizationService(new TestPreferenceStore(), AppLanguage.English);
 
         Assert.Equal("Change language", service.Get("menu.changeLanguage"));
-        Assert.Equal("Snapshot", service.Get("common.snapshot"));
+        Assert.Equal("Current state", service.Get("common.snapshot"));
     }
 
     [Fact]
@@ -19,7 +19,7 @@ public sealed class LocalizationServiceTests
         var service = new LocalizationService(new TestPreferenceStore(), AppLanguage.Russian);
 
         Assert.Equal("Сменить язык", service.Get("menu.changeLanguage"));
-        Assert.Equal("Снимок состояния", service.Get("common.snapshot"));
+        Assert.Equal("Текущее состояние", service.Get("common.snapshot"));
     }
 
     [Fact]

@@ -3,7 +3,18 @@ namespace OmenGamingHubUnlocker.Windows;
 /// <summary>
 /// Snapshot of a scheduled task that the unlocker may inspect or modify.
 /// </summary>
-public sealed record TaskItem(string Path, bool Enabled);
+public sealed record TaskItem(
+    string Path,
+    bool Enabled,
+    string State = "Unknown",
+    IReadOnlyList<string>? Actions = null)
+{
+    public IReadOnlyList<string> ActionPaths { get; } = Actions ?? [];
+    public bool IsRunning => State.Equals("Running", StringComparison.OrdinalIgnoreCase);
+    public bool RequiresStop =>
+        IsRunning ||
+        State.Equals("Queued", StringComparison.OrdinalIgnoreCase);
+}
 
 /// <summary>
 /// Describes the desired enabled flag for a scheduled task.
@@ -42,7 +53,7 @@ public static class TaskSchedulerManager
         {
             var schedulerType = Type.GetTypeFromProgID("Schedule.Service");
             if (schedulerType is null)
-                return matchingTasks;
+                throw new InvalidOperationException(Text.Get("manager.taskScheduler.capabilityNotAvailable"));
 
             dynamic taskScheduler = Activator.CreateInstance(schedulerType)!;
             taskScheduler.Connect();
@@ -50,9 +61,11 @@ public static class TaskSchedulerManager
             dynamic rootFolder = taskScheduler.GetFolder("\\");
             EnumerateFolder(rootFolder, patterns, matchingTasks, matchEverything);
         }
-        catch
+        catch (Exception exception)
         {
-            // Querying tasks is best-effort because some machines can have custom scheduler ACLs.
+            throw new InvalidOperationException(
+                $"Task Scheduler discovery failed: {exception.Message}",
+                exception);
         }
 
         return matchingTasks
@@ -63,8 +76,9 @@ public static class TaskSchedulerManager
     public static List<OperationLine> ApplyEnabledTargets(IEnumerable<TaskEnableTarget> targets, bool dryRun)
     {
         var requestedTargets = targets
+            .Select(target => target with { Path = NormalizeTaskPath(target.Path) })
             .DistinctBy(target => target.Path, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(target => NormalizeTaskPath(target.Path), target => target.Enabled, StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(target => target.Path, target => target.Enabled, StringComparer.OrdinalIgnoreCase);
 
         if (requestedTargets.Count == 0)
         {
@@ -132,6 +146,64 @@ public static class TaskSchedulerManager
         return operationLines;
     }
 
+    public static List<OperationLine> StopTasks(IEnumerable<string> taskPaths, bool dryRun)
+    {
+        var requestedPaths = taskPaths
+            .Select(NormalizeTaskPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (requestedPaths.Count == 0)
+            return [LocalizedLine.Info("manager.tasks.nothingToStop")];
+
+        var currentTasks = QueryTasks([])
+            .ToDictionary(task => NormalizeTaskPath(task.Path), StringComparer.OrdinalIgnoreCase);
+        var operationLines = new List<OperationLine>();
+
+        foreach (var taskPath in requestedPaths)
+        {
+            if (!currentTasks.TryGetValue(taskPath, out var currentTask))
+            {
+                operationLines.Add(LocalizedLine.Err("manager.tasks.notFound", taskPath));
+                continue;
+            }
+
+            if (!currentTask.RequiresStop)
+            {
+                operationLines.Add(LocalizedLine.Info("manager.tasks.alreadyStopped", taskPath));
+                continue;
+            }
+
+            if (dryRun)
+            {
+                operationLines.Add(LocalizedLine.Ok("manager.tasks.wouldStop", taskPath));
+                continue;
+            }
+
+            try
+            {
+                StopViaCom(taskPath);
+                operationLines.Add(LocalizedLine.Ok("manager.tasks.stopped", taskPath));
+            }
+            catch (Exception exception)
+            {
+                var fallbackApplied = PowerShellRunner.TryRun(
+                    "schtasks.exe",
+                    $"/End /TN \"{taskPath}\"",
+                    out _,
+                    out var fallbackError,
+                    20_000);
+
+                operationLines.Add(fallbackApplied
+                    ? LocalizedLine.Warn("manager.tasks.stopFallbackApplied", taskPath)
+                    : LocalizedLine.Err("manager.tasks.failedToStop", taskPath, exception.Message, fallbackError));
+            }
+        }
+
+        return operationLines;
+    }
+
     private static void EnumerateFolder(dynamic folder, string[] patterns, List<TaskItem> destination, bool matchEverything)
     {
         dynamic tasks = folder.GetTasks(1);
@@ -143,9 +215,17 @@ public static class TaskSchedulerManager
             string taskName = task.Name;
             string taskPath = task.Path;
             bool isEnabled = task.Enabled;
+            string taskState = MapTaskState((int)task.State);
+            IReadOnlyList<string> actionPaths = ReadActionPaths(task);
 
-            if (matchEverything || patterns.Any(pattern => WildcardMatch(taskName, pattern) || WildcardMatch(taskPath, pattern)))
-                destination.Add(new TaskItem(taskPath, isEnabled));
+            if (matchEverything ||
+                patterns.Any(pattern =>
+                    WildcardMatcher.IsMatch(taskName, pattern) ||
+                    WildcardMatcher.IsMatch(taskPath, pattern) ||
+                    actionPaths.Any(action => WildcardMatcher.IsMatch(action, pattern))))
+            {
+                destination.Add(new TaskItem(taskPath, isEnabled, taskState, actionPaths));
+            }
         }
 
         dynamic subFolders = folder.GetFolders(0);
@@ -176,18 +256,66 @@ public static class TaskSchedulerManager
         task.Enabled = enabled;
     }
 
-    private static string NormalizeTaskPath(string taskPath)
-        => taskPath.StartsWith("\\", StringComparison.Ordinal) ? taskPath : "\\" + taskPath;
-
-    private static bool WildcardMatch(string input, string pattern)
+    private static void StopViaCom(string taskPath)
     {
-        var regex = "^" + System.Text.RegularExpressions.Regex.Escape(pattern)
-            .Replace("\\*", ".*")
-            .Replace("\\?", ".") + "$";
+        var schedulerType = Type.GetTypeFromProgID("Schedule.Service")
+                            ?? throw new InvalidOperationException(Text.Get("manager.taskScheduler.capabilityNotAvailable"));
 
-        return System.Text.RegularExpressions.Regex.IsMatch(
-            input ?? string.Empty,
-            regex,
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        dynamic taskScheduler = Activator.CreateInstance(schedulerType)!;
+        taskScheduler.Connect();
+
+        var normalizedTaskPath = NormalizeTaskPath(taskPath);
+        var lastPathSeparator = normalizedTaskPath.LastIndexOf('\\');
+        var folderPath = lastPathSeparator <= 0 ? "\\" : normalizedTaskPath[..lastPathSeparator];
+        var taskName = normalizedTaskPath[(lastPathSeparator + 1)..];
+
+        dynamic folder = taskScheduler.GetFolder(folderPath);
+        dynamic task = folder.GetTask(taskName);
+        task.Stop(0);
     }
+
+    private static List<string> ReadActionPaths(dynamic task)
+    {
+        try
+        {
+            dynamic actions = task.Definition.Actions;
+            var result = new List<string>();
+            int actionCount = actions.Count;
+
+            for (var index = 1; index <= actionCount; index++)
+            {
+                dynamic action = actions.Item(index);
+                try
+                {
+                    string path = action.Path;
+                    if (!string.IsNullOrWhiteSpace(path))
+                        result.Add(path);
+                }
+                catch
+                {
+                    // Non-executable actions do not expose a Path property.
+                }
+            }
+
+            return result;
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static string MapTaskState(int taskState)
+        => taskState switch
+        {
+            1 => "Disabled",
+            2 => "Queued",
+            3 => "Ready",
+            4 => "Running",
+            _ => "Unknown"
+        };
+
+    private static string NormalizeTaskPath(string taskPath)
+        => taskPath.StartsWith('\\') ? taskPath : "\\" + taskPath;
+
 }

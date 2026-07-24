@@ -99,6 +99,24 @@ public static class PowerShellRunner
         }
     }
 
+    /// <summary>
+    /// Executes a script through Windows PowerShell without command-line quoting or injection ambiguity.
+    /// </summary>
+    public static bool TryRunScript(
+        string script,
+        out string standardOutput,
+        out string standardError,
+        int timeoutMs = 30_000)
+    {
+        var encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+        return TryRun(
+            "powershell.exe",
+            $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encodedScript}",
+            out standardOutput,
+            out standardError,
+            timeoutMs);
+    }
+
     private static void TryKillProcess(Process process)
     {
         try
