@@ -4,7 +4,7 @@ It does not uninstall OMEN or remove drivers. It limits OMEN background startup 
 
 Menu guide:
  - Check status: shows the current state of every managed component.
- - Safety check (no changes): inspects the system and shows an exact action plan without changing anything.
+ - Dry Run (no changes): inspects the system and shows an exact action plan without changing anything.
  - Activate protection: applies the main protection profile.
  - Restore original settings: reverses the app's changes using the saved backup.
  - Reset OMEN and reapply protection: runs the Windows app reset and immediately restores protection.
@@ -29,7 +29,7 @@ What Reset OMEN does:
  - Reapplies and verifies protection.
 
 Good to know:
- - Start with Check status or Safety check if this is your first time using the app.
+ - Start with Check status or Dry Run if this is your first time using the app.
  - Use Activate protection for normal operation.
  - If OMEN updated or stopped working, use Reset OMEN and reapply protection.
  - Use Restore original settings to reverse all managed changes.
