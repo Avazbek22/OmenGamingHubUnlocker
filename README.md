@@ -34,6 +34,18 @@ Get the latest **portable single-file** build from GitHub Releases:
 
 ---
 
+## 🏗️ Build release artifacts
+
+Run the release script from a clean local `main` branch that exactly matches `origin/main`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Publish-Release.ps1
+```
+
+The script runs the test suite and produces self-contained single-file executables for `win-x64` and `win-arm64` in `artifacts\release\v<version>`, together with `SHA256SUMS.txt`.
+
+---
+
 ## ✅ Requirements
 
 - Windows **10** or **11**
