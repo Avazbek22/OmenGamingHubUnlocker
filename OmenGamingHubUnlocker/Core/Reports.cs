@@ -36,11 +36,11 @@ public sealed class StatusReport
 
     public string ToPrettyText()
     {
-        return $"Services matched: {ServicesMatched}\n" +
-               $"Tasks matched: {TasksMatched}\n" +
-               $"Run entries matched: {RunEntriesMatched}\n" +
-               $"Firewall rules ({OmenTargets.FirewallRulePrefix}): {FirewallRulesFound}\n" +
-               $"Running OMEN-related processes: {RunningProcesses.Count}\n";
+        return Text.Format("reports.servicesMatched", ServicesMatched) + "\n" +
+               Text.Format("reports.tasksMatched", TasksMatched) + "\n" +
+               Text.Format("reports.runEntriesMatched", RunEntriesMatched) + "\n" +
+               Text.Format("reports.firewallRules", OmenTargets.FirewallRulePrefix, FirewallRulesFound) + "\n" +
+               Text.Format("reports.runningProcesses", RunningProcesses.Count) + "\n";
     }
 }
 

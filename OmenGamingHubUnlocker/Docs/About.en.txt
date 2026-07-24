@@ -1,0 +1,19 @@
+OmenGamingHubUnlocker is a small utility for HP OMEN laptops and desktop computers.
+
+Purpose:
+ - Keep OMEN Gaming Hub installed while limiting unwanted startup and background activity.
+
+Features:
+ - Manage services, scheduled tasks, and startup entries
+ - Block OMEN network access through Windows Firewall
+ - Block known OMEN domains through the hosts file
+ - Reset the OMEN package and automatically reapply protection
+
+Author:
+ - Avazbek22
+
+GitHub:
+ - https://github.com/Avazbek22/OmenGamingHubUnlocker
+
+License:
+ - MIT

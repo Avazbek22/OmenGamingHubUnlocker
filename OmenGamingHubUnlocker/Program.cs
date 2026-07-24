@@ -1,20 +1,27 @@
 try
 {
+    var languagePreferenceStore = new FileLanguagePreferenceStore();
+    var startupLanguage = AppLanguageResolver.ResolveStartupLanguage(languagePreferenceStore);
+    Text.Initialize(new LocalizationService(languagePreferenceStore, startupLanguage));
+
     Console.Title = "OmenGamingHubUnlocker by Avazbek22";
 
     if (!OperatingSystem.IsWindows())
     {
-        Console.WriteLine("This app supports Windows only.");
+        Console.WriteLine(Text.Get("program.windowsOnly"));
         Environment.Exit(2);
     }
 
     var applicationInfo = AppInfo.Create();
 
-    // The manifest already asks for elevation, but the runtime check keeps the failure explicit.
     if (!applicationInfo.IsAdministrator)
     {
-        Console.WriteLine("Administrator rights are required.");
-        Environment.Exit(1);
+        if (AdminHelper.TryRelaunchAsAdministrator(applicationInfo.ExePath, args))
+            return;
+
+        Console.WriteLine(Text.Get("program.adminRequired"));
+        Environment.ExitCode = 1;
+        return;
     }
 
     var unlockerEngine = new UnlockerEngine();
@@ -24,7 +31,7 @@ try
 catch (Exception exception)
 {
     Console.WriteLine();
-    ConsoleHelpers.WriteError("Fatal error.");
+    ConsoleHelpers.WriteError(Text.Get("program.fatalError"));
     Console.WriteLine(exception);
-    ConsoleHelpers.Pause("Press any key to exit...");
+    ConsoleHelpers.Pause(Text.Get("program.pressAnyKeyToExit"));
 }

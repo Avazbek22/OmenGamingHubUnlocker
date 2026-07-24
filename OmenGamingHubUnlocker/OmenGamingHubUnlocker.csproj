@@ -2,6 +2,11 @@
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
+        <Version>3.2.0</Version>
+        <AssemblyVersion>3.2.0.0</AssemblyVersion>
+        <FileVersion>3.2.0.0</FileVersion>
+        <InformationalVersion>3.2</InformationalVersion>
+        <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
 
         <!-- Windows 10/11 minimum -->
         <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
@@ -11,6 +16,8 @@
 
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
+        <AnalysisLevel>latest-recommended</AnalysisLevel>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 
         <ApplicationManifest>app.manifest</ApplicationManifest>
 
@@ -21,11 +28,12 @@
 
     <ItemGroup>
         <!-- WMI (services) -->
-        <PackageReference Include="System.Management" Version="8.0.0" />
+        <PackageReference Include="System.Management" Version="10.0.10" />
     </ItemGroup>
 
     <ItemGroup>
         <EmbeddedResource Include="Docs\*.txt" />
+        <EmbeddedResource Include="Localization\Resources\*.json" />
     </ItemGroup>
 
 

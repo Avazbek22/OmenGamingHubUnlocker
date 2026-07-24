@@ -27,7 +27,7 @@ public static class ConsoleTable
         var tableRows = ExtractRows(snapshots);
         if (tableRows.Count == 0)
         {
-            ConsoleHelpers.WriteHint("No status table data.");
+            ConsoleHelpers.WriteHint(Text.Get("table.noStatusData"));
             return false;
         }
 
@@ -91,16 +91,22 @@ public static class ConsoleTable
             currentValues[index] ??= string.Empty;
         }
 
-        const string colAName = "Area";
-        const string colIName = "Item";
-        const string colCName = "Current";
-        const string colRName = "Result";
+        var displayAreaValues = areaValues.Select(LocalizeAreaValue).ToList();
+        var displayCurrentValues = currentValues
+            .Select((value, index) => LocalizeCurrentValue(areaValues[index], value))
+            .ToList();
+        var displayResultValues = resultValues.Select(LocalizeResultValue).ToList();
 
-        var widthA = Math.Clamp(Math.Max(colAName.Length, areaValues.Max(value => value.Length)), 8, 22);
+        var colAName = Text.Get("table.column.area");
+        var colIName = Text.Get("table.column.item");
+        var colCName = Text.Get("table.column.current");
+        var colRName = Text.Get("table.column.result");
+
+        var widthA = Math.Clamp(Math.Max(colAName.Length, displayAreaValues.Max(value => value.Length)), 8, 22);
         var widthI = Math.Clamp(Math.Max(colIName.Length, itemValues.Max(value => value.Length)), 12, 62);
-        var widthC = Math.Clamp(Math.Max(colCName.Length, currentValues.Max(value => value.Length)), 10, 70);
+        var widthC = Math.Clamp(Math.Max(colCName.Length, displayCurrentValues.Max(value => value.Length)), 10, 70);
         var widthR = showResultColumn
-            ? Math.Clamp(Math.Max(colRName.Length, resultValues.Max(value => value.Length)), 8, 22)
+            ? Math.Clamp(Math.Max(colRName.Length, displayResultValues.Max(value => value.Length)), 10, 42)
             : 0;
 
         var consoleWidth = TryGetConsoleWidth();
@@ -113,7 +119,13 @@ public static class ConsoleTable
             if (total > consoleWidth - 1)
             {
                 var overflow = total - (consoleWidth - 1);
-                widthC = Math.Max(24, widthC - overflow);
+                ShrinkColumn(ref widthC, minimumWidth: 18, ref overflow);
+                ShrinkColumn(ref widthI, minimumWidth: 24, ref overflow);
+
+                if (showResultColumn)
+                    ShrinkColumn(ref widthR, minimumWidth: 22, ref overflow);
+
+                ShrinkColumn(ref widthA, minimumWidth: 8, ref overflow);
             }
         }
 
@@ -129,10 +141,10 @@ public static class ConsoleTable
 
             for (var index = 0; index < tableRows.Count; index++)
             {
-                var area = Trunc(areaValues[index], widthA);
+                var area = Trunc(displayAreaValues[index], widthA);
                 var item = Trunc(itemValues[index], widthI);
-                var current = Trunc(currentValues[index], widthC);
-                var result = Trunc(resultValues[index], widthR);
+                var current = Trunc(displayCurrentValues[index], widthC);
+                var result = Trunc(displayResultValues[index], widthR);
 
                 Console.Write(area.PadRight(widthA));
                 Console.Write(" | ");
@@ -141,7 +153,7 @@ public static class ConsoleTable
                 Console.Write(current.PadRight(widthC));
                 Console.Write(" | ");
 
-                ConsoleHelpers.WithColor(ResultColor(result), () => Console.Write(result.PadRight(widthR)));
+                ConsoleHelpers.WithColor(ResultColor(resultValues[index]), () => Console.Write(result.PadRight(widthR)));
                 Console.WriteLine();
             }
         }
@@ -155,9 +167,9 @@ public static class ConsoleTable
 
             for (var index = 0; index < tableRows.Count; index++)
             {
-                var area = Trunc(areaValues[index], widthA);
+                var area = Trunc(displayAreaValues[index], widthA);
                 var item = Trunc(itemValues[index], widthI);
-                var current = Trunc(currentValues[index], widthC);
+                var current = Trunc(displayCurrentValues[index], widthC);
 
                 Console.Write(area.PadRight(widthA));
                 Console.Write(" | ");
@@ -183,20 +195,49 @@ public static class ConsoleTable
         var a = (area ?? "").Trim().ToLowerInvariant();
         var cur = (current ?? "").Trim();
 
+        if (a.Contains("process"))
+        {
+            return eff == StatusIntent.AfterActivate
+                ? "PREDICT_PROCESS_TERMINATE"
+                : "PREDICT_NO_CHANGE";
+        }
+
         if (a.Contains("service"))
         {
             if (eff == StatusIntent.AfterActivate)
-                return ContainsAny(cur, "manual") ? "Will keep Manual" : "Will set Manual";
+            {
+                var isManual = ContainsAny(cur, "manual");
+                var requiresStop = ContainsAny(cur, "running", "pending", "paused");
 
-            return ContainsAny(cur, "auto", "automatic", "delayed") ? "Will keep Auto" : "Will set Auto";
+                return (isManual, requiresStop) switch
+                {
+                    (false, true) => "PREDICT_SERVICE_SET_MANUAL_AND_STOP",
+                    (false, false) => "PREDICT_SERVICE_SET_MANUAL",
+                    (true, true) => "PREDICT_SERVICE_STOP",
+                    _ => "PREDICT_NO_CHANGE"
+                };
+            }
+
+            return "PREDICT_RESTORE_FROM_BACKUP";
         }
 
         if (a.Contains("task"))
         {
             if (eff == StatusIntent.AfterActivate)
-                return ContainsAny(cur, "disabled") ? "Will keep Disabled" : "Will disable";
+            {
+                var isDisabled = ContainsAny(cur, "disabled");
+                var requiresStop = ContainsAny(cur, "running", "queued");
 
-            return ContainsAny(cur, "enabled") ? "Will keep Enabled" : "Will enable";
+                return (isDisabled, requiresStop) switch
+                {
+                    (false, true) => "PREDICT_TASK_DISABLE_AND_STOP",
+                    (false, false) => "PREDICT_TASK_DISABLE",
+                    (true, true) => "PREDICT_TASK_STOP",
+                    _ => "PREDICT_NO_CHANGE"
+                };
+            }
+
+            return "PREDICT_RESTORE_FROM_BACKUP";
         }
 
         if (a.Contains("firewall"))
@@ -204,29 +245,29 @@ public static class ConsoleTable
             if (TryExtractInt(cur, out var n))
             {
                 if (eff == StatusIntent.AfterActivate)
-                    return n > 0 ? "Will refresh rules" : "Will create rules";
-                return n > 0 ? "Will remove rules" : "No rules to remove";
+                    return n > 0 ? "PREDICT_FIREWALL_REFRESH" : "PREDICT_FIREWALL_CREATE";
+                return n > 0 ? "PREDICT_FIREWALL_REMOVE" : "PREDICT_FIREWALL_NO_RULES";
             }
 
-            return eff == StatusIntent.AfterActivate ? "Will (re)create rules" : "Will remove rules";
+            return eff == StatusIntent.AfterActivate ? "PREDICT_FIREWALL_RECREATE" : "PREDICT_FIREWALL_REMOVE";
         }
 
         if (a.Contains("hosts"))
         {
             if (eff == StatusIntent.AfterActivate)
-                return ContainsAny(cur, "not blocked") ? "Will block" : "Will keep blocked";
+                return ContainsAny(cur, "not blocked") ? "PREDICT_HOSTS_BLOCK" : "PREDICT_HOSTS_KEEP_BLOCKED";
 
-            return ContainsAny(cur, "not blocked") ? "No entries to remove" : "Will remove entries";
+            return ContainsAny(cur, "not blocked") ? "PREDICT_HOSTS_NO_ENTRIES" : "PREDICT_HOSTS_REMOVE_ENTRIES";
         }
 
         if (a.Contains("run") || a.Contains("autostart") || a.Contains("startup"))
         {
             if (eff == StatusIntent.AfterActivate)
-                return "Will remove autostart";
-            return "Cannot restore (manual)";
+                return "PREDICT_RUN_REMOVE_AUTOSTART";
+            return "PREDICT_RESTORE_FROM_BACKUP";
         }
 
-        return "Will check";
+        return "PREDICT_NO_CHANGE";
     }
 
     // ------------------------------------------------------------
@@ -250,24 +291,18 @@ public static class ConsoleTable
         // Normalize optional fields
         var lv = NormalizeLevel(levelRaw);
 
-        // 2) In AfterActivate/AfterDisable we RE-COMPUTE by intent.
-        //    Snapshot "Level/Result" often describes a neutral status (INFO/WARN),
-        //    and would incorrectly override Disable=OK. We only respect explicit failure.
+        // Explicit typed results are authoritative. Intent inference exists only for legacy rows.
+        if (lv is not null)
+            return lv;
+
         if (intent != StatusIntent.Neutral)
         {
-            if (lv == "ERR")
-                return "ERR";
-
             if (TryParseBool(successRaw, out var okFromBool) && !okFromBool)
                 return "ERR";
 
             var byIntent = EvaluateByIntent(area, current, intent);
             if (byIntent is not null)
                 return byIntent;
-
-            // If we can't classify by intent, then fall back to snapshot meta
-            if (lv is not null)
-                return lv;
 
             if (TryParseBool(successRaw, out okFromBool))
                 return okFromBool ? "OK" : "ERR";
@@ -282,14 +317,10 @@ public static class ConsoleTable
             return !string.IsNullOrWhiteSpace(current) ? "INFO" : "INFO";
         }
 
-        // 3) Neutral mode: snapshot meta should win (status screen)
-        if (lv is not null)
-            return lv;
-
         if (TryParseBool(successRaw, out var okBool))
             return okBool ? "OK" : "ERR";
 
-        // 4) Expected vs Current — compare (if available)
+        // 4) Compare Expected with Current when both are available.
         var exp = NormalizeComparable(expectedRaw);
         var cur2 = NormalizeComparable(current);
 
@@ -342,8 +373,9 @@ public static class ConsoleTable
 
         if (a.Contains("run") || a.Contains("autostart") || a.Contains("startup"))
         {
-            // Activation removes Run entries, Disable cannot restore -> INFO always (honest).
-            return "INFO";
+            return intent == StatusIntent.AfterActivate
+                ? (ContainsAny(cur, "present") ? "WARN" : "OK")
+                : (ContainsAny(cur, "present") ? "OK" : "WARN");
         }
 
         return null;
@@ -442,7 +474,8 @@ public static class ConsoleTable
 
         if (s.StartsWith("Will ", StringComparison.OrdinalIgnoreCase) ||
             s.StartsWith("No ", StringComparison.OrdinalIgnoreCase) ||
-            s.StartsWith("Cannot ", StringComparison.OrdinalIgnoreCase))
+            s.StartsWith("Cannot ", StringComparison.OrdinalIgnoreCase) ||
+            s.StartsWith("PREDICT_", StringComparison.OrdinalIgnoreCase))
             return ConsoleColor.Cyan;
 
         var u = s.ToUpperInvariant();
@@ -496,11 +529,7 @@ public static class ConsoleTable
             list.Add(new MemberAccessor(
                 p.Name,
                 p.PropertyType,
-                o =>
-                {
-                    try { return p.GetValue(o); }
-                    catch { return null; }
-                }));
+                instance => ReadPropertyValue(p, instance)));
         }
 
         foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.Instance))
@@ -508,14 +537,36 @@ public static class ConsoleTable
             list.Add(new MemberAccessor(
                 f.Name,
                 f.FieldType,
-                o =>
-                {
-                    try { return f.GetValue(o); }
-                    catch { return null; }
-                }));
+                instance => ReadFieldValue(f, instance)));
         }
 
         return list;
+    }
+
+    private static object? ReadPropertyValue(PropertyInfo property, object instance)
+    {
+        try
+        {
+            return property.GetValue(instance);
+        }
+        catch
+        {
+            // A faulty diagnostic property must not prevent the remaining status table from rendering.
+            return null;
+        }
+    }
+
+    private static object? ReadFieldValue(FieldInfo field, object instance)
+    {
+        try
+        {
+            return field.GetValue(instance);
+        }
+        catch
+        {
+            // Reflection failures are isolated to the affected diagnostic cell.
+            return null;
+        }
     }
 
     private static string SafeGetString(MemberAccessor? m, object row)
@@ -673,7 +724,7 @@ public static class ConsoleTable
         Console.WriteLine();
         ConsoleHelpers.WithColor(ConsoleColor.Cyan, () =>
         {
-            Console.WriteLine("Item");
+            Console.WriteLine(Text.Get("table.fallback.item"));
             Console.WriteLine(new string('-', 64));
         });
 
@@ -688,7 +739,7 @@ public static class ConsoleTable
         s ??= "";
         if (s.Length <= width) return s;
         if (width <= 3) return s.Substring(0, width);
-        return s.Substring(0, width - 3) + "...";
+        return string.Concat(s.AsSpan(0, width - 3), "...");
     }
 
     private static int TryGetConsoleWidth()
@@ -701,5 +752,101 @@ public static class ConsoleTable
         {
             return 0;
         }
+    }
+
+    private static void ShrinkColumn(ref int width, int minimumWidth, ref int overflow)
+    {
+        if (overflow <= 0 || width <= minimumWidth)
+            return;
+
+        var reduction = Math.Min(width - minimumWidth, overflow);
+        width -= reduction;
+        overflow -= reduction;
+    }
+
+    private static string LocalizeAreaValue(string area)
+    {
+        return area switch
+        {
+            "Processes" => Text.Get("area.processes"),
+            "Services" => Text.Get("area.services"),
+            "Tasks" => Text.Get("area.tasks"),
+            "Autostart (Run)" => Text.Get("area.autostartRun"),
+            "Firewall" => Text.Get("area.firewall"),
+            "hosts" => Text.Get("area.hosts"),
+            "General" => Text.Get("area.general"),
+            _ => area
+        };
+    }
+
+    private static string LocalizeCurrentValue(string area, string current)
+    {
+        return string.Join(
+            ", ",
+            current.Split(',', StringSplitOptions.TrimEntries)
+                .Select(value => LocalizeStateValue(area, value)));
+    }
+
+    private static string LocalizeStateValue(string area, string value)
+    {
+        return value switch
+        {
+            "Running" when area == "Processes" => Text.Get("state.processRunning"),
+            "Running" when area == "Services" => Text.Get("state.serviceRunning"),
+            "Running" when area == "Tasks" => Text.Get("state.taskRunning"),
+            "Stopped" when area == "Services" => Text.Get("state.serviceStopped"),
+            "Ready" when area == "Tasks" => Text.Get("state.taskReady"),
+            "Queued" when area == "Tasks" => Text.Get("state.taskQueued"),
+            "Paused" when area == "Services" => Text.Get("state.servicePaused"),
+            "Running" => Text.Get("state.running"),
+            "Stopped" => Text.Get("state.stopped"),
+            "Ready" => Text.Get("state.ready"),
+            "Queued" => Text.Get("state.queued"),
+            "Paused" => Text.Get("state.paused"),
+            "Unknown" => Text.Get("state.unknown"),
+            "Manual" => Text.Get("state.manual"),
+            "Auto" => Text.Get("state.auto"),
+            "Automatic" => Text.Get("state.automatic"),
+            "Delayed" => Text.Get("state.delayed"),
+            "Enabled" when area == "Tasks" => Text.Get("state.taskEnabled"),
+            "Disabled" when area == "Tasks" => Text.Get("state.taskDisabled"),
+            "Enabled" => Text.Get("state.enabled"),
+            "Disabled" => Text.Get("state.disabled"),
+            "Present" => Text.Get("state.present"),
+            "Blocked" when area == "hosts" => Text.Get("state.hostBlocked"),
+            "Not blocked" when area == "hosts" => Text.Get("state.hostNotBlocked"),
+            "Blocked" => Text.Get("state.blocked"),
+            "Not blocked" => Text.Get("state.notBlocked"),
+            "True" => Text.Get("state.true"),
+            "False" => Text.Get("state.false"),
+            _ => value
+        };
+    }
+
+    private static string LocalizeResultValue(string result)
+    {
+        return result switch
+        {
+            "PREDICT_PROCESS_TERMINATE" => Text.Get("table.predict.processTerminate"),
+            "PREDICT_SERVICE_SET_MANUAL_AND_STOP" => Text.Get("table.predict.serviceSetManualAndStop"),
+            "PREDICT_SERVICE_SET_MANUAL" => Text.Get("table.predict.serviceSetManual"),
+            "PREDICT_SERVICE_STOP" => Text.Get("table.predict.serviceStop"),
+            "PREDICT_TASK_DISABLE_AND_STOP" => Text.Get("table.predict.taskDisableAndStop"),
+            "PREDICT_TASK_DISABLE" => Text.Get("table.predict.taskDisable"),
+            "PREDICT_TASK_STOP" => Text.Get("table.predict.taskStop"),
+            "PREDICT_FIREWALL_REFRESH" => Text.Get("table.predict.firewallRefresh"),
+            "PREDICT_FIREWALL_CREATE" => Text.Get("table.predict.firewallCreate"),
+            "PREDICT_FIREWALL_REMOVE" => Text.Get("table.predict.firewallRemove"),
+            "PREDICT_FIREWALL_NO_RULES" => Text.Get("table.predict.firewallNoRules"),
+            "PREDICT_FIREWALL_RECREATE" => Text.Get("table.predict.firewallRecreate"),
+            "PREDICT_HOSTS_BLOCK" => Text.Get("table.predict.hostsBlock"),
+            "PREDICT_HOSTS_KEEP_BLOCKED" => Text.Get("table.predict.hostsKeepBlocked"),
+            "PREDICT_HOSTS_NO_ENTRIES" => Text.Get("table.predict.hostsNoEntries"),
+            "PREDICT_HOSTS_REMOVE_ENTRIES" => Text.Get("table.predict.hostsRemoveEntries"),
+            "PREDICT_RUN_REMOVE_AUTOSTART" => Text.Get("table.predict.runRemoveAutostart"),
+            "PREDICT_RESTORE_FROM_BACKUP" => Text.Get("table.predict.restoreFromBackup"),
+            "PREDICT_NO_CHANGE" => Text.Get("table.predict.noChange"),
+            _ => result
+        };
     }
 }

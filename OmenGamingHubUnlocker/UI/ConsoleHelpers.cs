@@ -25,7 +25,7 @@ public static class ConsoleHelpers
         {
             Console.WriteLine(text);
             Console.WriteLine();
-            Console.WriteLine("Developed by Avazbek22");
+            Console.WriteLine(Text.Format("console.developedBy", OmenTargets.Developer));
             Console.WriteLine(new string('=', Math.Max(10, text.Length)));
         });
 
@@ -99,10 +99,10 @@ public static class ConsoleHelpers
         Console.WriteLine();
     }
 
-    public static void Pause(string message = "Press any key to continue...")
+    public static void Pause(string? message = null)
     {
         Console.WriteLine();
-        WithColor(ConsoleColor.Cyan, () => Console.WriteLine(message));
+        WithColor(ConsoleColor.Cyan, () => Console.WriteLine(message ?? Text.Get("common.pressAnyKeyToContinue")));
 
         try
         {
@@ -116,7 +116,7 @@ public static class ConsoleHelpers
 
     public static string ReadMenuChoice()
     {
-        WithColor(ConsoleColor.Gray, () => Console.Write("Select: "));
+        WithColor(ConsoleColor.Gray, () => Console.Write($"{Text.Get("common.select")}: "));
 
         try
         {
@@ -131,10 +131,10 @@ public static class ConsoleHelpers
     /// <summary>
     /// Lets the user continue with Enter or cancel with Escape.
     /// </summary>
-    public static bool ConfirmEnterOrEscape(string message = "Press Enter to continue or Esc to cancel...")
+    public static bool ConfirmEnterOrEscape(string? message = null)
     {
         Console.WriteLine();
-        WithColor(ConsoleColor.Cyan, () => Console.WriteLine(message));
+        WithColor(ConsoleColor.Cyan, () => Console.WriteLine(message ?? Text.Get("common.pressEnterToContinueOrEscToCancel")));
 
         while (true)
         {
@@ -156,6 +156,8 @@ public static class ConsoleHelpers
 
     public static void PrintOperationLinesAnimated(IEnumerable<OperationLine> lines)
     {
+        using var cursorVisibility = HideCursorForAnimation();
+
         foreach (var line in lines)
         {
             DelayBeforeNextLine();
@@ -166,12 +168,16 @@ public static class ConsoleHelpers
 
     public static void PrintLinesAnimated(IEnumerable<string> lines, ConsoleColor color = ConsoleColor.Gray)
     {
+        using var cursorVisibility = HideCursorForAnimation();
+
         foreach (var line in lines)
         {
             DelayBeforeNextLine();
             WithColor(color, () => Console.WriteLine(line));
         }
     }
+
+    internal static IDisposable HideCursorForAnimation() => new CursorVisibilityScope();
 
     /// <summary>
     /// Prints a single key/value pair with separate colors for the label and the value.
@@ -222,5 +228,47 @@ public static class ConsoleHelpers
 
         if (totalDelay > 0)
             Thread.Sleep(totalDelay);
+    }
+
+    private sealed class CursorVisibilityScope : IDisposable
+    {
+        private bool? originalVisibility;
+        private bool isDisposed;
+
+        public CursorVisibilityScope()
+        {
+            if (Console.IsOutputRedirected)
+                return;
+
+            try
+            {
+                originalVisibility = Console.CursorVisible;
+                Console.CursorVisible = false;
+            }
+            catch
+            {
+                // Cursor control is optional because not every Windows terminal implements it.
+                originalVisibility = null;
+            }
+        }
+
+        public void Dispose()
+        {
+            if (isDisposed)
+                return;
+
+            isDisposed = true;
+            if (originalVisibility is null)
+                return;
+
+            try
+            {
+                Console.CursorVisible = originalVisibility.Value;
+            }
+            catch
+            {
+                // A closing terminal must not turn successful application work into a failure.
+            }
+        }
     }
 }

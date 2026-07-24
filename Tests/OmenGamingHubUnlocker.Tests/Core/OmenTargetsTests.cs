@@ -3,34 +3,46 @@ namespace OmenGamingHubUnlocker.Tests.Core;
 public sealed class OmenTargetsTests
 {
     [Fact]
-    public void HostsDomains_ShouldContainKnownEndpointsWithoutDuplicates()
+    public void ServicePatterns_ShouldNotTargetSupportAssistant()
     {
-        Assert.NotEmpty(OmenTargets.HostsDomains);
-        Assert.Equal(OmenTargets.HostsDomains.Length, OmenTargets.HostsDomains.Distinct(StringComparer.OrdinalIgnoreCase).Count());
-        Assert.Contains("hpbp.io", OmenTargets.HostsDomains);
+        Assert.DoesNotContain(
+            OmenTargets.ServicePatterns,
+            pattern => pattern.Contains("SupportAssistant", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData(@"HP\OmenInstallMonitor")]
+    [InlineData(@"HP\Overlay")]
+    public void ExternalExecutableDirectories_ShouldIncludeCurrentBackgroundComponents(string directory)
+    {
+        Assert.Contains(directory, OmenTargets.ExtraExeDirsRelative, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("OverlayHelper")]
+    [InlineData("OmenCommandCenterBackground")]
+    [InlineData("HP.Omen.Application.Background.Tasks.Container")]
+    public void ProcessPatterns_ShouldMatchKnownBackgroundComponents(string processName)
+    {
+        Assert.Contains(
+            OmenTargets.ProcessNamePatterns,
+            pattern => WildcardMatcher.IsMatch(processName, pattern));
     }
 
     [Fact]
-    public void ServicePatterns_ShouldContainOmenAndHpPatterns()
+    public void TargetCollections_ShouldNotContainDuplicates()
     {
-        Assert.Contains("*OMEN*", OmenTargets.ServicePatterns);
-        Assert.Contains("*HP Gaming*", OmenTargets.ServicePatterns);
-        Assert.NotEmpty(OmenTargets.ServicePatterns);
+        AssertDistinct(OmenTargets.HostsDomains);
+        AssertDistinct(OmenTargets.ServicePatterns);
+        AssertDistinct(OmenTargets.TaskPatterns);
+        AssertDistinct(OmenTargets.RunEntryPatterns);
+        AssertDistinct(OmenTargets.ProcessNamePatterns);
+        AssertDistinct(OmenTargets.ExtraExeDirsRelative);
     }
 
-    [Fact]
-    public void TaskPatterns_ShouldContainOverlayRelatedPatterns()
+    private static void AssertDistinct(IEnumerable<string> values)
     {
-        Assert.Contains("*Omen*", OmenTargets.TaskPatterns);
-        Assert.Contains("*HP.OMEN*", OmenTargets.TaskPatterns);
-        Assert.NotEmpty(OmenTargets.TaskPatterns);
-    }
-
-    [Fact]
-    public void Constants_ShouldExposeStableMarkers()
-    {
-        Assert.Equal("Tame-OMEN", OmenTargets.FirewallRulePrefix);
-        Assert.Equal("# OmenGamingHubUnlocker", OmenTargets.HostsMarker);
-        Assert.False(string.IsNullOrWhiteSpace(OmenTargets.PrimaryAppxPackageName));
+        var items = values.ToList();
+        Assert.Equal(items.Count, items.Distinct(StringComparer.OrdinalIgnoreCase).Count());
     }
 }

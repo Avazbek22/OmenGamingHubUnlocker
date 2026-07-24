@@ -53,9 +53,12 @@ Get the latest **portable single-file** build from GitHub Releases:
    - **[1] Check status** — shows current state (services / tasks / firewall / hosts)
    - **[2] Dry run** — deep analysis + preview (“Will …” predictions)
    - **[3] Activate scripts** — applies changes
-   - **[4] Disable scripts** — removes rules/hosts created by this tool, attempts to re-enable services/tasks
-   - **[5] About** — mini README
-   - **[6] Exit**
+   - **[4] Disable scripts** — restores the exact saved startup state and removes this tool's network blocks
+   - **[5] Reset OMEN & Activate** — resets AppX data while keeping OMEN isolated, then re-applies protection
+   - **[6] Help**
+   - **[7] About**
+   - **[8] Change language**
+   - **[9] Exit**
 
 5. 🔄 Reboot is **optional**, but recommended if you want a clean “startup verification”.
 
@@ -63,28 +66,29 @@ Get the latest **portable single-file** build from GitHub Releases:
 
 ## 🧰 What “Activate scripts” does
 
-When you run **Activate scripts**, the tool applies changes (best-effort):
+When you run **Activate scripts**, the tool:
 
-- **Services:** sets typical HP/OMEN helper/telemetry services to **Manual**
-- **Tasks:** disables scheduled tasks matching HP/OMEN patterns
-- **Run keys:** removes HP/OMEN autostart entries from common registry Run locations *(one-way by design)*
-- **Firewall (optional):** discovers OMEN-related executables and creates **outbound block** rules using a prefix (default: `Tame-OMEN`)
+- **Firewall:** creates a version-independent package-SID block and explicit outbound blocks for current OMEN executables
+- **Services:** sets OMEN-owned services to **Manual** and stops running instances
+- **Tasks:** disables OMEN scheduled tasks and stops running instances
+- **Processes:** terminates discovered package and known external OMEN background processes
+- **Run keys:** removes matching OMEN autostart entries after saving their exact values
 - **Hosts (optional):** adds `127.0.0.1 ...` mappings for known HP/OMEN endpoints
+- **Verification:** requires two consecutive stable snapshots before reporting success
 
-At the end, the tool prints a **status snapshot table**.
+Rollback state is saved before startup settings are changed.
 
 ---
 
 ## ♻️ What “Disable scripts” does
 
-When you run **Disable scripts**, the tool (best-effort):
+When you run **Disable scripts**, the tool:
 
-- Removes **Firewall rules** created by this tool (by prefix)
-- Removes **hosts entries** created by this tool
-- Attempts to re-enable HP/OMEN **services/tasks**
-
-> Important: **Run (autostart) registry entries are not restored** by design.  
-> If you need OMEN to autostart again, use OMEN’s settings (if available) or reinstall/repair OMEN Gaming Hub.
+- Restores the exact saved service startup and running states, including Delayed Auto Start
+- Restores saved task enabled states and Run-entry values
+- Verifies startup restoration before removing network protection
+- Removes only firewall rules and hosts entries owned by this tool
+- Keeps the rollback file and network protection if restoration is incomplete
 
 ---
 
@@ -92,13 +96,14 @@ When you run **Disable scripts**, the tool (best-effort):
 
 OMEN Gaming Hub updates (especially from Microsoft Store) can change internal paths/executables.
 
-This tool manages firewall rules by **prefix** (default: `Tame-OMEN`). On each activation it:
+The primary firewall rule is bound to the stable Store package SID rather than a versioned installation path. On each activation the tool also:
 
-- removes **all old** rules with that prefix
-- re-discovers OMEN-related executables again
-- creates a **fresh set** of outbound block rules
+- keeps the package rule active while path rules are refreshed
+- re-discovers package and external OMEN executables
+- removes obsolete path rules
+- verifies every current executable has an enabled outbound block rule
 
-So after an OMEN update you typically just run **Activate scripts** again — and your rules stay clean.
+This avoids the unprotected window that previously existed between AppX reset and firewall refresh.
 
 ---
 
@@ -108,7 +113,7 @@ So after an OMEN update you typically just run **Activate scripts** again — an
 
 - does **not** uninstall OMEN Gaming Hub
 - does **not** remove drivers or core Windows components
-- only touches (best-effort):
+- only touches:
   - startup type of selected services
   - selected scheduled tasks
   - HP/OMEN Run entries in the registry
@@ -128,12 +133,13 @@ So after an OMEN update you typically just run **Activate scripts** again — an
 - **Runtime:** **.NET 10**
 - **App type:** Console app (Windows 10/11), single-file portable build
 - **Elevation:** Uses an application manifest to request **Administrator** (UAC) on startup
-- **Core operations (best-effort, resilient):**
+- **Core operations:**
   - services management via Windows APIs (and safe fallbacks where needed)
-  - scheduled tasks management (pattern-based)
+  - scheduled task disable and running-instance termination
   - registry Run entries cleanup (common locations)
-  - firewall management via Windows Firewall COM (`HNetCfg.*`) with fallback to PowerShell cmdlets when needed
-  - hosts file edits with tagged entries (so they can be cleanly removed)
+  - package-SID and executable firewall rules with COM/PowerShell fallback and post-write verification
+  - atomic, encoding-preserving hosts and rollback-state writes
+  - interactive-user validation before AppX or HKCU operations
 
 The UI is designed to be predictable:
 - **Status** = current facts  

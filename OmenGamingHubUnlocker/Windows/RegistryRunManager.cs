@@ -3,7 +3,12 @@ namespace OmenGamingHubUnlocker.Windows;
 /// <summary>
 /// Snapshot of a Run key entry together with its registry location.
 /// </summary>
-public sealed record RunEntry(RegistryHive Hive, RegistryView View, string Name, string Value)
+public sealed record RunEntry(
+    RegistryHive Hive,
+    RegistryView View,
+    string Name,
+    string Value,
+    RegistryValueKind ValueKind = RegistryValueKind.String)
 {
     public string Location => $"{FormatHive(Hive)}({View})\\{RunSubKey}";
 
@@ -21,11 +26,15 @@ public static class RegistryRunManager
     public static List<RunEntry> QueryRunEntries(string[] patterns)
     {
         var matchingEntries = new List<RunEntry>();
+        var errors = new List<string>();
 
-        matchingEntries.AddRange(ReadFrom(RegistryHive.CurrentUser, RegistryView.Registry64, patterns));
-        matchingEntries.AddRange(ReadFrom(RegistryHive.CurrentUser, RegistryView.Registry32, patterns));
-        matchingEntries.AddRange(ReadFrom(RegistryHive.LocalMachine, RegistryView.Registry64, patterns));
-        matchingEntries.AddRange(ReadFrom(RegistryHive.LocalMachine, RegistryView.Registry32, patterns));
+        matchingEntries.AddRange(ReadFrom(RegistryHive.CurrentUser, RegistryView.Registry64, patterns, errors));
+        matchingEntries.AddRange(ReadFrom(RegistryHive.CurrentUser, RegistryView.Registry32, patterns, errors));
+        matchingEntries.AddRange(ReadFrom(RegistryHive.LocalMachine, RegistryView.Registry64, patterns, errors));
+        matchingEntries.AddRange(ReadFrom(RegistryHive.LocalMachine, RegistryView.Registry32, patterns, errors));
+
+        if (errors.Count > 0)
+            throw new InvalidOperationException(string.Join("; ", errors));
 
         return matchingEntries
             .DistinctBy(BuildIdentityKey, StringComparer.OrdinalIgnoreCase)
@@ -42,7 +51,7 @@ public static class RegistryRunManager
         {
             return
             [
-                new OperationLine { Level = "INFO", Text = "Registry Run: nothing to remove." }
+                LocalizedLine.Info("manager.registry.nothingToRemove")
             ];
         }
 
@@ -62,7 +71,7 @@ public static class RegistryRunManager
                         operationLines.Add(new OperationLine
                         {
                             Level = "WARN",
-                            Text = $"Registry Run: key not found for {entry.Location} -> {entry.Name}"
+                            Text = Text.Format("manager.registry.keyNotFound", entry.Location, entry.Name)
                         });
                     }
 
@@ -76,7 +85,7 @@ public static class RegistryRunManager
                         operationLines.Add(new OperationLine
                         {
                             Level = "OK",
-                            Text = $"Registry Run: would remove {entry.Location} -> {entry.Name}"
+                            Text = Text.Format("manager.registry.wouldRemove", entry.Location, entry.Name)
                         });
                         continue;
                     }
@@ -85,7 +94,7 @@ public static class RegistryRunManager
                     operationLines.Add(new OperationLine
                     {
                         Level = "OK",
-                        Text = $"Registry Run: removed {entry.Location} -> {entry.Name}"
+                        Text = Text.Format("manager.registry.removed", entry.Location, entry.Name)
                     });
                 }
             }
@@ -94,7 +103,7 @@ public static class RegistryRunManager
                 operationLines.Add(new OperationLine
                 {
                     Level = "WARN",
-                    Text = $"Registry Run: failed in {FormatLocation(entryGroup.Key.Hive, entryGroup.Key.View)}: {exception.Message}"
+                    Text = Text.Format("manager.registry.failedIn", FormatLocation(entryGroup.Key.Hive, entryGroup.Key.View), exception.Message)
                 });
             }
         }
@@ -112,7 +121,7 @@ public static class RegistryRunManager
         {
             return
             [
-                new OperationLine { Level = "INFO", Text = "Registry Run: no backup state found." }
+                LocalizedLine.Info("manager.registry.noBackupState")
             ];
         }
 
@@ -132,7 +141,7 @@ public static class RegistryRunManager
                         operationLines.Add(new OperationLine
                         {
                             Level = "ERR",
-                            Text = $"Registry Run: failed to open {FormatLocation(entry.Hive, entry.View)} for restore."
+                            Text = Text.Format("manager.registry.failedToOpenForRestore", FormatLocation(entry.Hive, entry.View))
                         });
                     }
 
@@ -146,16 +155,16 @@ public static class RegistryRunManager
                         operationLines.Add(new OperationLine
                         {
                             Level = "OK",
-                            Text = $"Registry Run: would restore {FormatLocation(entry.Hive, entry.View)}\\{RunEntry.RunSubKey} -> {entry.Name}"
+                            Text = Text.Format("manager.registry.wouldRestore", FormatLocation(entry.Hive, entry.View), RunEntry.RunSubKey, entry.Name)
                         });
                         continue;
                     }
 
-                    runKey.SetValue(entry.Name, entry.Value, RegistryValueKind.String);
+                    runKey.SetValue(entry.Name, entry.Value, entry.ValueKind);
                     operationLines.Add(new OperationLine
                     {
                         Level = "OK",
-                        Text = $"Registry Run: restored {FormatLocation(entry.Hive, entry.View)}\\{RunEntry.RunSubKey} -> {entry.Name}"
+                        Text = Text.Format("manager.registry.restored", FormatLocation(entry.Hive, entry.View), RunEntry.RunSubKey, entry.Name)
                     });
                 }
             }
@@ -164,7 +173,7 @@ public static class RegistryRunManager
                 operationLines.Add(new OperationLine
                 {
                     Level = "ERR",
-                    Text = $"Registry Run: restore failed in {FormatLocation(entryGroup.Key.Hive, entryGroup.Key.View)}: {exception.Message}"
+                    Text = Text.Format("manager.registry.restoreFailedIn", FormatLocation(entryGroup.Key.Hive, entryGroup.Key.View), exception.Message)
                 });
             }
         }
@@ -172,7 +181,11 @@ public static class RegistryRunManager
         return operationLines;
     }
 
-    private static IEnumerable<RunEntry> ReadFrom(RegistryHive hive, RegistryView view, string[] patterns)
+    private static List<RunEntry> ReadFrom(
+        RegistryHive hive,
+        RegistryView view,
+        string[] patterns,
+        List<string> errors)
     {
         var matchingEntries = new List<RunEntry>();
         var matchEverything = patterns.Length == 0;
@@ -186,14 +199,28 @@ public static class RegistryRunManager
 
             foreach (var valueName in runKey.GetValueNames())
             {
-                var valueData = runKey.GetValue(valueName)?.ToString() ?? string.Empty;
-                if (matchEverything || MatchesAnyPattern(valueName, valueData, patterns))
-                    matchingEntries.Add(new RunEntry(hive, view, valueName, valueData));
+                var valueKind = runKey.GetValueKind(valueName);
+                var valueData = runKey.GetValue(
+                        valueName,
+                        defaultValue: string.Empty,
+                        RegistryValueOptions.DoNotExpandEnvironmentNames)
+                    ?.ToString() ?? string.Empty;
+                if (!matchEverything && !MatchesAnyPattern(valueName, valueData, patterns))
+                    continue;
+
+                if (valueKind is not RegistryValueKind.String and not RegistryValueKind.ExpandString)
+                {
+                    errors.Add(
+                        $"{FormatLocation(hive, view)}\\{valueName}: unsupported Run value type {valueKind}.");
+                    continue;
+                }
+
+                matchingEntries.Add(new RunEntry(hive, view, valueName, valueData, valueKind));
             }
         }
-        catch
+        catch (Exception exception)
         {
-            // A blocked hive should not stop the rest of the discovery pass.
+            errors.Add($"{FormatLocation(hive, view)}: {exception.Message}");
         }
 
         return matchingEntries;
@@ -209,17 +236,7 @@ public static class RegistryRunManager
         => $"{entry.Hive}|{entry.View}|{entry.Name}";
 
     private static bool MatchesAnyPattern(string valueName, string valueData, string[] patterns)
-        => patterns.Any(pattern => WildcardMatch(valueName, pattern) || WildcardMatch(valueData, pattern));
-
-    private static bool WildcardMatch(string input, string pattern)
-    {
-        var regex = "^" + System.Text.RegularExpressions.Regex.Escape(pattern)
-            .Replace("\\*", ".*")
-            .Replace("\\?", ".") + "$";
-
-        return System.Text.RegularExpressions.Regex.IsMatch(
-            input ?? string.Empty,
-            regex,
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-    }
+        => patterns.Any(pattern =>
+            WildcardMatcher.IsMatch(valueName, pattern) ||
+            WildcardMatcher.IsMatch(valueData, pattern));
 }
