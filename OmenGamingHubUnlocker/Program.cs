@@ -1,3 +1,5 @@
+WindowsConsoleShellIntegration? shellIntegration = null;
+
 try
 {
     var languagePreferenceStore = new FileLanguagePreferenceStore();
@@ -24,8 +26,9 @@ try
         return;
     }
 
+    shellIntegration = WindowsConsoleShellIntegration.Create();
     var unlockerEngine = new UnlockerEngine();
-    var menuLoop = new MenuLoop(applicationInfo, unlockerEngine);
+    var menuLoop = new MenuLoop(applicationInfo, unlockerEngine, shellIntegration);
     menuLoop.Run();
 }
 catch (Exception exception)
@@ -34,4 +37,8 @@ catch (Exception exception)
     ConsoleHelpers.WriteError(Text.Get("program.fatalError"));
     Console.WriteLine(exception);
     ConsoleHelpers.Pause(Text.Get("program.pressAnyKeyToExit"));
+}
+finally
+{
+    shellIntegration?.Dispose();
 }

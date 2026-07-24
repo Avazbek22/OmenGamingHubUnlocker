@@ -3,7 +3,10 @@ namespace OmenGamingHubUnlocker.UI;
 /// <summary>
 /// Owns the interactive console workflow and delegates the real work to the engine.
 /// </summary>
-public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
+public sealed class MenuLoop(
+    AppInfo appInfo,
+    UnlockerEngine engine,
+    ITaskbarProgressService taskbarProgress)
 {
     public void Run()
     {
@@ -98,7 +101,8 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
 
         var statusReport = ConsoleActivityIndicator.Run(
             Text.Get("activity.status"),
-            engine.GetStatusReport);
+            engine.GetStatusReport,
+            taskbarProgress);
         PrintStatusReport(statusReport, ConsoleTable.StatusIntent.Neutral, showResultColumn: true, predictive: false);
         ConsoleHelpers.Pause();
     }
@@ -127,7 +131,8 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
 
         var operationReport = ConsoleActivityIndicator.Run(
             Text.Get("activity.dryRun"),
-            engine.RunDryRunDeep);
+            engine.RunDryRunDeep,
+            taskbarProgress);
         PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterActivate, showResultColumn: true, predictive: true);
         ConsoleHelpers.Pause();
     }
@@ -156,7 +161,8 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
 
         var operationReport = ConsoleActivityIndicator.Run(
             Text.Get("activity.activate"),
-            () => engine.Activate(UnlockerOptions.ForActivate()));
+            () => engine.Activate(UnlockerOptions.ForActivate()),
+            taskbarProgress);
         PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterActivate, showResultColumn: true, predictive: false);
         ConsoleHelpers.Pause();
     }
@@ -182,7 +188,8 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
 
         var operationReport = ConsoleActivityIndicator.Run(
             Text.Get("activity.disable"),
-            () => engine.Disable(UnlockerOptions.ForDisable()));
+            () => engine.Disable(UnlockerOptions.ForDisable()),
+            taskbarProgress);
         PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterDisable, showResultColumn: true, predictive: false);
         ConsoleHelpers.Pause();
     }
@@ -211,7 +218,8 @@ public sealed class MenuLoop(AppInfo appInfo, UnlockerEngine engine)
 
         var operationReport = ConsoleActivityIndicator.Run(
             Text.Get("activity.reset"),
-            () => engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply()));
+            () => engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply()),
+            taskbarProgress);
         PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterActivate, showResultColumn: true, predictive: false);
         ConsoleHelpers.Pause();
     }

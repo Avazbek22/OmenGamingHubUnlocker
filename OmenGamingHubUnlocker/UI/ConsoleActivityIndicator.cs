@@ -8,10 +8,15 @@ public static class ConsoleActivityIndicator
     private const int FrameDelayMilliseconds = 180;
     private static readonly string[] Frames = [".  ", ".. ", "..."];
 
-    public static T Run<T>(string message, Func<T> operation)
+    public static T Run<T>(
+        string message,
+        Func<T> operation,
+        ITaskbarProgressService? taskbarProgress = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
         ArgumentNullException.ThrowIfNull(operation);
+
+        using var taskbarProgressScope = TryBeginTaskbarProgress(taskbarProgress);
 
         if (Console.IsOutputRedirected)
         {
@@ -65,4 +70,16 @@ public static class ConsoleActivityIndicator
         Console.Write('\r');
     }
 
+    private static IDisposable? TryBeginTaskbarProgress(ITaskbarProgressService? taskbarProgress)
+    {
+        try
+        {
+            return taskbarProgress?.BeginIndeterminate();
+        }
+        catch
+        {
+            // Optional taskbar feedback must not affect the underlying operation.
+            return null;
+        }
+    }
 }
