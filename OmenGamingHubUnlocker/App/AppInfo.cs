@@ -15,6 +15,7 @@ public sealed class AppInfo
     public const string AppDisplayVersion = "3.2";
     public const string AppVersionTag = "v" + AppDisplayVersion;
     public const string AppDisplayName = AppName + " " + AppVersionTag;
+    public const string SupportUrl = "https://boosty.to/avazbek22";
 
     public string ExePath { get; }
     public bool IsAdministrator { get; }

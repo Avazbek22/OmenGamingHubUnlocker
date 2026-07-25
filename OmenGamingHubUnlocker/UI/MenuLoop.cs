@@ -6,7 +6,8 @@ namespace OmenGamingHubUnlocker.UI;
 public sealed class MenuLoop(
     AppInfo appInfo,
     UnlockerEngine engine,
-    ITaskbarProgressService taskbarProgress)
+    ITaskbarProgressService taskbarProgress,
+    IExternalLinkLauncher externalLinkLauncher)
 {
     public void Run()
     {
@@ -23,13 +24,16 @@ public sealed class MenuLoop(
             Console.WriteLine($"[6] {Text.Get("menu.help")}");
             Console.WriteLine($"[7] {Text.Get("menu.about")}");
             Console.WriteLine($"[8] {Text.Get("menu.changeLanguage")}");
-            Console.WriteLine($"[9] {Text.Get("menu.exit")}");
+            Console.WriteLine($"[9] {Text.Get("menu.support")}");
+            Console.WriteLine($"[0] {Text.Get("menu.exit")}");
             Console.WriteLine();
 
             var selectedAction = ConsoleHelpers.ReadMenuChoice();
 
             switch (selectedAction)
             {
+                case "0":
+                    return;
                 case "1":
                     ShowStatus();
                     break;
@@ -55,13 +59,24 @@ public sealed class MenuLoop(
                     Text.ToggleLanguage();
                     break;
                 case "9":
-                    return;
+                    OpenSupportPage();
+                    break;
                 default:
                     ConsoleHelpers.WriteWarning(Text.Get("common.invalidChoice"));
                     ConsoleHelpers.Pause();
                     break;
             }
         }
+    }
+
+    private void OpenSupportPage()
+    {
+        if (externalLinkLauncher.TryOpen(AppInfo.SupportUrl))
+            return;
+
+        ConsoleHelpers.WriteError(Text.Get("support.openFailed"));
+        ConsoleHelpers.WriteInfo(Text.Format("support.openManually", AppInfo.SupportUrl));
+        ConsoleHelpers.Pause();
     }
 
     private void RenderMainMenuHeader()

@@ -28,7 +28,12 @@ try
 
     shellIntegration = WindowsConsoleShellIntegration.Create();
     var unlockerEngine = new UnlockerEngine();
-    var menuLoop = new MenuLoop(applicationInfo, unlockerEngine, shellIntegration);
+    var externalLinkLauncher = new ShellExternalLinkLauncher();
+    var menuLoop = new MenuLoop(
+        applicationInfo,
+        unlockerEngine,
+        shellIntegration,
+        externalLinkLauncher);
     menuLoop.Run();
 }
 catch (Exception exception)

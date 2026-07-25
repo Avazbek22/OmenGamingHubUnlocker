@@ -12,6 +12,7 @@ public sealed class DocumentationProviderTests
         Assert.Contains(lines, line => line.Contains("It does not uninstall OMEN or remove drivers.", StringComparison.Ordinal));
         Assert.Contains(lines, line => line.Contains("Dry Run (no changes)", StringComparison.Ordinal));
         Assert.Contains(lines, line => line.Contains("Restore original settings", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.Contains("Support the project", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -32,5 +33,6 @@ public sealed class DocumentationProviderTests
         Assert.NotEmpty(lines);
         Assert.Contains(lines, line => line.Contains("Описание меню:", StringComparison.Ordinal));
         Assert.Contains(lines, line => line.Contains("Эта программа помогает держать OMEN Gaming Hub под контролем.", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.Contains("Поддержать проект", StringComparison.Ordinal));
     }
 }

@@ -11,6 +11,7 @@ Menu guide:
  - Help: opens this page.
  - About: shows brief project information.
  - Change language: switches between English and Russian.
+ - Support the project: opens the developer's Boosty page in your default browser.
 
 What Activate protection does:
  - Blocks network access for the current OMEN package and executables.

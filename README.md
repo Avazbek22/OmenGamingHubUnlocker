@@ -1,12 +1,24 @@
-# Omen Gaming Hub Unlocker
+<h1 align="center">Omen Gaming Hub Unlocker</h1>
 
-![Downloads](https://img.shields.io/github/downloads/Avazbek22/OmenGamingHubUnlocker/total)
-![License](https://img.shields.io/github/license/Avazbek22/OmenGamingHubUnlocker)
-![.NET](https://img.shields.io/badge/.NET-10-purple)
-![Platform](https://img.shields.io/badge/platform-Windows-green)
-![Repo size](https://img.shields.io/github/repo-size/Avazbek22/OmenGamingHubUnlocker)
+<p align="center">
+  <a href="https://github.com/Avazbek22/OmenGamingHubUnlocker/releases">
+    <img src="https://img.shields.io/github/downloads/Avazbek22/OmenGamingHubUnlocker/total?style=flat-square&amp;color=0078d4" alt="Total downloads">
+  </a>
+  <img src="https://img.shields.io/github/license/Avazbek22/OmenGamingHubUnlocker?style=flat-square" alt="MIT license">
+  <img src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&amp;logo=dotnet&amp;logoColor=white" alt=".NET 10">
+  <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&amp;logo=windows11&amp;logoColor=white" alt="Windows 10 and 11">
+  <img src="https://img.shields.io/github/repo-size/Avazbek22/OmenGamingHubUnlocker?style=flat-square" alt="Repository size">
+</p>
 
-Small helper tool for **HP OMEN** laptops and desktops.
+<p align="center">
+  <a href="https://boosty.to/avazbek22">
+    <img src=".github/assets/boosty-support.svg" width="800" alt="Support OmenGamingHubUnlocker on Boosty">
+  </a>
+</p>
+
+<p align="center">
+  Small helper tool for <strong>HP OMEN</strong> laptops and desktops.
+</p>
 
 It keeps **OMEN Gaming Hub** installed, but helps you prevent unwanted background behavior and “region-check” style network calls **before you are ready** (for example, before you connect a VPN).
 
@@ -70,7 +82,8 @@ The script runs the test suite and produces self-contained single-file executabl
    - **[6] Help**
    - **[7] About**
    - **[8] Change language**
-   - **[9] Exit**
+   - **[9] Support the project (Boosty)**
+   - **[0] Exit**
 
 5. 🔄 Reboot is **optional**, but recommended if you want a clean “startup verification”.
 
@@ -185,7 +198,15 @@ This tool is specifically made for the workflow: **boot → VPN → launch OMEN 
 
 ## 🤝 Support the project
 
-If this tool helped you:
+OmenGamingHubUnlocker is free and open source. If it helped you keep OMEN usable, consider supporting continued development, compatibility testing, and future updates:
+
+<p align="center">
+  <a href="https://boosty.to/avazbek22">
+    <img src=".github/assets/boosty-support.svg" width="800" alt="Support OmenGamingHubUnlocker on Boosty">
+  </a>
+</p>
+
+You can also support the project by contributing:
 
 - ⭐ **Star** the repository  
 - 🍴 **Fork** it and adapt it to your OMEN model/setup  
