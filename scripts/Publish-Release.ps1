@@ -6,11 +6,14 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$ReleaseBranch = "main",
 
-    [switch]$SkipRepositoryChecks
+    [switch]$SkipRepositoryChecks,
+
+    [switch]$ValidateConfigurationOnly
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "release-helpers.ps1")
 
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $solutionPath = Join-Path $repositoryRoot "OmenGamingHubUnlocker.sln"
@@ -92,15 +95,15 @@ function Assert-SafeReleasePath {
     }
 }
 
-function Get-ProjectVersion {
-    [xml]$project = Get-Content -Raw -LiteralPath $projectPath
-    $version = [string]($project.Project.PropertyGroup.Version | Select-Object -First 1)
+$versionInfo = Get-ProjectReleaseInfo -ProjectPath $projectPath
 
-    if ([string]::IsNullOrWhiteSpace($version)) {
-        throw "The project Version property is missing."
-    }
-
-    return $version.Trim()
+if ($ValidateConfigurationOnly) {
+    Write-Host "Release configuration is valid:" -ForegroundColor Green
+    Write-Host "  Build version   : $($versionInfo.BuildVersion)"
+    Write-Host "  Display version : $($versionInfo.DisplayVersion)"
+    Write-Host "  Package version : $($versionInfo.PackageVersion)"
+    Write-Host "  Release tag     : $($versionInfo.ReleaseTag)"
+    return
 }
 
 if ($SkipRepositoryChecks) {
@@ -112,8 +115,8 @@ else {
 
 Assert-SafeReleasePath
 
-$version = Get-ProjectVersion
-$releaseDirectory = Join-Path $releaseRoot "v$version"
+$displayVersion = $versionInfo.DisplayVersion
+$releaseDirectory = Join-Path $releaseRoot $versionInfo.ReleaseTag
 $stagingDirectory = Join-Path $releaseRoot ".staging"
 
 if (Test-Path -LiteralPath $releaseRoot) {
@@ -154,10 +157,22 @@ $releaseArtifacts = foreach ($runtimeIdentifier in $runtimeIdentifiers) {
         throw "The $runtimeIdentifier single-file executable was not produced."
     }
 
-    $artifactName = "OmenGamingHubUnlocker-v$version-$runtimeIdentifier.exe"
+    $artifactName = Get-ReleaseArtifactName `
+        -DisplayVersion $displayVersion `
+        -RuntimeIdentifier $runtimeIdentifier
     $artifactPath = Join-Path $releaseDirectory $artifactName
     Copy-Item -LiteralPath $publishedExecutable -Destination $artifactPath
-    Get-Item -LiteralPath $artifactPath
+    $artifact = Get-Item -LiteralPath $artifactPath
+
+    if ($artifact.VersionInfo.FileVersion -ne $versionInfo.PackageVersion) {
+        throw "Unexpected FileVersion in '$artifactName': $($artifact.VersionInfo.FileVersion)."
+    }
+
+    if ($artifact.VersionInfo.ProductVersion -ne $displayVersion) {
+        throw "Unexpected ProductVersion in '$artifactName': $($artifact.VersionInfo.ProductVersion)."
+    }
+
+    $artifact
 }
 
 $checksumLines = foreach ($artifact in $releaseArtifacts) {
@@ -171,7 +186,7 @@ $checksumPath = Join-Path $releaseDirectory "SHA256SUMS.txt"
 Remove-Item -LiteralPath $stagingDirectory -Recurse -Force
 
 Write-Host
-Write-Host "Release v$version is ready:" -ForegroundColor Green
+Write-Host "Release $($versionInfo.ReleaseTag) is ready:" -ForegroundColor Green
 foreach ($artifact in $releaseArtifacts) {
     Write-Host "  $($artifact.Name) ($([Math]::Round($artifact.Length / 1MB, 2)) MiB)"
 }

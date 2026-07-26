@@ -56,6 +56,38 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Publish-Release.ps
 
 The script runs the test suite and produces self-contained single-file executables for `win-x64` and `win-arm64` in `artifacts\release\v<version>`, together with `SHA256SUMS.txt`.
 
+Version properties have distinct purposes and are validated before every release:
+
+- `InformationalVersion` is the public GitHub version used by tags and artifact names, such as `3.2`.
+- `Version` is the .NET build version, such as `3.2.0`.
+- `FileVersion` and `AssemblyVersion` are the four-part Windows and WinGet version, such as `3.2.0.0`.
+
+The script stops if these values do not describe the same release.
+
+### Publish to WinGet
+
+The WinGet helper supports both the first package submission and later updates:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Publish-WinGet.ps1
+```
+
+It reads the project version, verifies the public GitHub release and both architectures, generates manifests, runs `winget validate`, optionally performs a local install/uninstall test, and can submit the PR through WingetCreate.
+
+For a non-interactive update after publishing a GitHub release:
+
+```powershell
+.\scripts\Publish-WinGet.ps1 -Version 3.3 -NonInteractive -InstallTest -Submit
+```
+
+Prerequisites:
+
+- Current Windows Package Manager client.
+- Current `Microsoft.WingetCreate` package.
+- GitHub authentication configured in WingetCreate for PR submission.
+
+> WinGet treats Omen Gaming Hub Unlocker as a portable application. `winget uninstall` removes the executable and command alias, but it does not reverse protection previously applied to Windows. Run **Restore original settings** before uninstalling when you also want to remove the managed firewall, hosts, service, task, and startup changes.
+
 ---
 
 ## ✅ Requirements
