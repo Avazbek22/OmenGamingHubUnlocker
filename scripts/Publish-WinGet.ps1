@@ -553,4 +553,169 @@ function Submit-Manifests {
     Write-Host "> wingetcreate submit --prtitle `"$pullRequestTitle`" $ManifestRoot" -ForegroundColor DarkGray
     $submissionOutput = wingetcreate submit --prtitle $pullRequestTitle $ManifestRoot 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
-        throw "WingetCreate submission fc~7âÚ$z{-®éÜj×Ğ¨¨(4(Ô¸ƒÂ~RI•‰½½Ğ¥Ì€¨©½ÁÑ¥½¹…°¨¨°‰ÕĞÉ•½µµ•¹‘•¥˜å½Ôİ…¹Ğ„±•…¸ƒŠqÍÑ…ÉÑÕÀÙ•É¥™¥…Ñ¥½»Št¸4(4(´´´4(4(ŒŒƒÂ~À]¡…ĞƒŠqÑ¥Ù…Ñ”ÍÉ¥ÁÑÏŠt‘½•Ì4(4)]¡•¸å½ÔÉÕ¸€¨©Ñ¥Ù…Ñ”ÍÉ¥ÁÑÌ¨¨°Ñ¡”Ñ½½°è4(4(´€¨©¥É•İ…±°è¨¨É•…Ñ•Ì„Ù•ÉÍ¥½¸µ¥¹‘•Á•¹‘•¹ĞÁ…­…”µM%‰±½¬…¹•áÁ±¥¥Ğ½ÕÑ‰½Õ¹‰±½­Ì™½ÈÕÉÉ•¹Ğ=58•á•ÕÑ…‰±•Ì4(´€¨©M•ÉÙ¥•Ìè¨¨Í•ÑÌ=58µ½İ¹•Í•ÉÙ¥•ÌÑ¼€¨©5…¹Õ…°¨¨…¹ÍÑ½ÁÌÉÕ¹¹¥¹œ¥¹ÍÑ…¹•Ì4(´€¨©Q…Í­Ìè¨¨‘¥Í…‰±•Ì=58Í¡•‘Õ±•Ñ…Í­Ì…¹ÍÑ½ÁÌÉÕ¹¹¥¹œ¥¹ÍÑ…¹•Ì4(´€¨©AÉ½•ÍÍ•Ìè¨¨Ñ•Éµ¥¹…Ñ•Ì‘¥Í½Ù•É•Á…­…”…¹­¹½İ¸•áÑ•É¹…°=58‰…­É½Õ¹ÁÉ½•ÍÍ•Ì4(´€¨©IÕ¸­•åÌè¨¨É•µ½Ù•Ìµ…Ñ¡¥¹œ=58…ÕÑ½ÍÑ…ÉĞ•¹ÑÉ¥•Ì…™Ñ•ÈÍ…Ù¥¹œÑ¡•¥È•á…ĞÙ…±Õ•Ì4(´€¨©!½ÍÑÌ€¡½ÁÑ¥½¹…°¤è¨¨…‘‘Ì€ÄÈÜ¸À¸À¸Ä€¸¸¹€µ…ÁÁ¥¹Ì™½È­¹½İ¸!@½=58•¹‘Á½¥¹ÑÌ4(´€¨©Y•É¥™¥…Ñ¥½¸è¨¨É•ÅÕ¥É•ÌÑİ¼½¹Í•ÕÑ¥Ù”ÍÑ…‰±”Í¹…ÁÍ¡½ÑÌ‰•™½É”É•Á½ÉÑ¥¹œÍÕ•ÍÌ4(4)I½±±‰…¬ÍÑ…Ñ”¥ÌÍ…Ù•‰•™½É”ÍÑ…ÉÑÕÀÍ•ÑÑ¥¹Ì…É”¡…¹•¸4(4(´´´4(4(ŒŒƒŠfï¾â<]¡…ĞƒŠq¥Í…‰±”ÍÉ¥ÁÑÏŠt‘½•Ì4(4)]¡•¸å½ÔÉÕ¸€¨©¥Í…‰±”ÍÉ¥ÁÑÌ¨¨°Ñ¡”Ñ½½°è4(4(´I•ÍÑ½É•ÌÑ¡”•á…ĞÍ…Ù•Í•ÉÙ¥”ÍÑ…ÉÑÕÀ…¹ÉÕ¹¹¥¹œÍÑ…Ñ•Ì°¥¹±Õ‘¥¹œ•±…å•ÕÑ¼MÑ…ÉĞ4(´I•ÍÑ½É•ÌÍ…Ù•Ñ…Í¬•¹…‰±•ÍÑ…Ñ•Ì…¹IÕ¸µ•¹ÑÉäÙ…±Õ•Ì4(´Y•É¥™¥•ÌÍÑ…ÉÑÕÀÉ•ÍÑ½É…Ñ¥½¸‰•™½É”É•µ½Ù¥¹œ¹•Ñİ½É¬ÁÉ½Ñ•Ñ¥½¸4(´I•µ½Ù•Ì½¹±ä™¥É•İ…±°ÉÕ±•Ì…¹¡½ÍÑÌ•¹ÑÉ¥•Ì½İ¹•‰äÑ¡¥ÌÑ½½°4(´-••ÁÌÑ¡”É½±±‰…¬™¥±”…¹¹•Ñİ½É¬ÁÉ½Ñ•Ñ¥½¸¥˜É•ÍÑ½É…Ñ¥½¸¥Ì¥¹½µÁ±•Ñ”4(4(´´´4(4(ŒŒƒÂ~Ä¥É•İ…±°ÉÕ±•Ì…É”ÕÁ‘…Ñ”µÍ…™”€¡¥µÁ½ÉÑ…¹Ğ¤4(4)=58…µ¥¹œ!ÕˆÕÁ‘…Ñ•Ì€¡•ÍÁ•¥…±±ä™É½´5¥É½Í½™ĞMÑ½É”¤…¸¡…¹”¥¹Ñ•É¹…°Á…Ñ¡Ì½•á•ÕÑ…‰±•Ì¸4(4)Q¡”ÁÉ¥µ…Éä™¥É•İ…±°ÉÕ±”¥Ì‰½Õ¹Ñ¼Ñ¡”ÍÑ…‰±”MÑ½É”Á…­…”M%É…Ñ¡•ÈÑ¡…¸„Ù•ÉÍ¥½¹•¥¹ÍÑ…±±…Ñ¥½¸Á…Ñ ¸=¸•… …Ñ¥Ù…Ñ¥½¸Ñ¡”Ñ½½°…±Í¼è4(4(´­••ÁÌÑ¡”Á…­…”ÉÕ±”…Ñ¥Ù”İ¡¥±”Á…Ñ ÉÕ±•Ì…É”É•™É•Í¡•4(´É”µ‘¥Í½Ù•ÉÌÁ…­…”…¹•áÑ•É¹…°=58•á•ÕÑ…‰±•Ì4(´É•µ½Ù•Ì½‰Í½±•Ñ”Á…Ñ ÉÕ±•Ì4(´Ù•É¥™¥•Ì•Ù•ÉäÕÉÉ•¹Ğ•á•ÕÑ…‰±”¡…Ì…¸•¹…‰±•½ÕÑ‰½Õ¹‰±½¬ÉÕ±”4(4)Q¡¥Ì…Ù½¥‘ÌÑ¡”Õ¹ÁÉ½Ñ•Ñ•İ¥¹‘½ÜÑ¡…ĞÁÉ•Ù¥½ÕÍ±ä•á¥ÍÑ•‰•Ñİ••¸ÁÁ`É•Í•Ğ…¹™¥É•İ…±°É•™É•Í ¸4(4(´´´4(4(ŒŒƒÂ~€]¡…ĞÑ¡¥ÌÑ½½°¥Ì€¡…¹¥Ì¹½Ğ¤4(4+ŠrQ¡¥ÌÑ½½°è4(4(´‘½•Ì€¨©¹½Ğ¨¨Õ¹¥¹ÍÑ…±°=58…µ¥¹œ!Õˆ4(´‘½•Ì€¨©¹½Ğ¨¨É•µ½Ù”‘É¥Ù•ÉÌ½È½É”]¥¹‘½İÌ½µÁ½¹•¹ÑÌ4(´½¹±äÑ½Õ¡•Ìè4(€€´ÍÑ…ÉÑÕÀÑåÁ”½˜Í•±•Ñ•Í•ÉÙ¥•Ì4(€€´Í•±•Ñ•Í¡•‘Õ±•Ñ…Í­Ì4(€€´!@½=58IÕ¸•¹ÑÉ¥•Ì¥¸Ñ¡”É•¥ÍÑÉä4(€€´½ÁÑ¥½¹…°™¥É•İ…±°ÉÕ±•ÌÉ•…Ñ•‰äÑ¡¥ÌÑ½½°4(€€´½ÁÑ¥½¹…°¡½ÍÑÌ•¹ÑÉ¥•ÌÉ•…Ñ•‰äÑ¡¥ÌÑ½½°4(4+Šv0Q¡¥ÌÑ½½°¥Ì¹½Ğè4(4(´„É…¬€¼Á…Ñ €¼Á•Éµ…¹•¹ĞƒŠqÉ•¥½¸¡…¹•ËŠt4(´„5¥É½Í½™ĞMÑ½É”É•¥½¸‰åÁ…ÍÌ‰ä¥ÑÍ•±˜4(4(´´´4(4(ŒŒƒÂ~¤Q•¡¹¥…°½Ù•ÉÙ¥•Ü€¡™½È‘•ÙÌ¤4(4(´€¨©1…¹Õ…”è¨¨Œ4(´€¨©IÕ¹Ñ¥µ”è¨¨€¨¨¹9P€ÄÀ¨¨4(´€¨©ÁÀÑåÁ”è¨¨½¹Í½±”…ÁÀ€¡]¥¹‘½İÌ€ÄÀ¼ÄÄ¤°Í¥¹±”µ™¥±”Á½ÉÑ…‰±”‰Õ¥±4(´€¨©±•Ù…Ñ¥½¸è¨¨UÍ•Ì…¸…ÁÁ±¥…Ñ¥½¸µ…¹¥™•ÍĞÑ¼É•ÅÕ•ÍĞ€¨©‘µ¥¹¥ÍÑÉ…Ñ½È¨¨€¡U¤½¸ÍÑ…ÉÑÕÀ4(´€¨©½É”½Á•É…Ñ¥½¹Ìè¨¨4(€€´Í•ÉÙ¥•Ìµ…¹…•µ•¹ĞÙ¥„]¥¹‘½İÌA%Ì€¡…¹Í…™”™…±±‰…­Ìİ¡•É”¹••‘•¤4(€€´Í¡•‘Õ±•Ñ…Í¬‘¥Í…‰±”…¹ÉÕ¹¹¥¹œµ¥¹ÍÑ…¹”Ñ•Éµ¥¹…Ñ¥½¸4(€€´É•¥ÍÑÉäIÕ¸•¹ÑÉ¥•Ì±•…¹ÕÀ€¡½µµ½¸±½…Ñ¥½¹Ì¤4(€€´Á…­…”µM%…¹•á•ÕÑ…‰±”™¥É•İ…±°ÉÕ±•Ìİ¥Ñ =4½A½İ•ÉM¡•±°™…±±‰…¬…¹Á½ÍĞµİÉ¥Ñ”Ù•É¥™¥…Ñ¥½¸4(€€´…Ñ½µ¥Œ°•¹½‘¥¹œµÁÉ•Í•ÉÙ¥¹œ¡½ÍÑÌ…¹É½±±‰…¬µÍÑ…Ñ”İÉ¥Ñ•Ì4(€€´¥¹Ñ•É…Ñ¥Ù”µÕÍ•ÈÙ…±¥‘…Ñ¥½¸‰•™½É”ÁÁ`½È!-T½Á•É…Ñ¥½¹Ì4(4)Q¡”U$¥Ì‘•Í¥¹•Ñ¼‰”ÁÉ•‘¥Ñ…‰±”è4(´€¨©MÑ…ÑÕÌ¨¨€ôÕÉÉ•¹Ğ™…ÑÌ€€4(´€¨©ÉäÉÕ¸¨¨€ôƒŠq]¥±°ƒŠ›ŠtÁÉ•‘¥Ñ¥½¹Ì€€4(´€¨©Ñ¥Ù…Ñ”½¥Í…‰±”¨¨€ô…Ñ¥½¹…‰±”¡…¹•Ì€¬™¥¹…°Í¹…ÁÍ¡½Ğ€€4(4(´´´4(4(ŒŒƒÂ~¤QÉ½Õ‰±•Í¡½½Ñ¥¹œ4(4(ŒŒŒMµ…ÉÑMÉ••¸èƒŠq]¥¹‘½İÌÁÉ½Ñ•Ñ•å½ÕÈAŠt4)A½ÉÑ…‰±”Õ¹Í¥¹•Ñ½½±Ì™É½´¥Ñ!Õˆµ…äÑÉ¥•ÈMµ…ÉÑMÉ••¸è4(4(´±¥¬€¨©5½É”¥¹™¼¨¨ƒŠH€¨©IÕ¸…¹åİ…ä¨¨4(4(ŒŒŒ=58ÍÑ¥±°™±…Í¡•Ì™½È„Í•½¹½¸±½¥¸4)U]@…ÁÁÌ…¸‰É¥•™±ä¥¹¥Ñ¥…±¥é”‘ÕÉ¥¹œ±½¥¸½ÕÁ‘…Ñ”¡•­Ì¸€€4)%˜Í•ÉÙ¥•Ì½Ñ…Í­Ì…É”Ñ…µ•…¹€¡½ÁÑ¥½¹…±±ä¤¹•Ñİ½É¬¥Ì‰±½­•°„Í¡½ÉĞ™±¥­•È‘½•Ì¹½Ğ¹••ÍÍ…É¥±äµ•…¸¥ĞÁ¡½¹•Ì¡½µ”¸4(4(ŒŒŒM•…É ­•åİ½É‘Ì€¡¡½ÜÁ•½Á±”ÕÍÕ…±±ä™¥¹Ñ¡¥Ì¤4)%˜å½×ŠeÉ”¡•É”‰•…ÕÍ”½˜½¹”½˜Ñ¡•Í”è4(´ƒŠq=58…µ¥¹œ!Õˆ¹½Ğ…Ù…¥±…‰±”¥¸µäÉ•¥½»Št4(´ƒŠq=58…µ¥¹œ!ÕˆİÉ½¹œÉ•¥½»Št4(´ƒŠq=58…µ¥¹œ!ÕˆÉ•¥½¸±½­•“Št4(´ƒŠq!@=58…µ¥¹œ!Õˆ½Õ¹ÑÉä¹½ĞÍÕÁÁ½ÉÑ•“Št4(´ƒŠq=58…µ¥¹œ!ÕˆYA8İ½É­…É½Õ¹“Št4(4)Q¡¥ÌÑ½½°¥ÌÍÁ•¥™¥…±±äµ…‘”™½ÈÑ¡”İ½É­™±½Üè€¨©‰½½ĞƒŠHYA8ƒŠH±…Õ¹ =58µ…¹Õ…±±ä¨¨¸4(4(´´´4(4(ŒŒƒÂ~’tMÕÁÁ½ÉĞÑ¡”ÁÉ½©•Ğ()=µ•¹…µ¥¹!Õ‰U¹±½­•È¥Ì™É•”…¹½Á•¸Í½ÕÉ”¸%˜¥Ğ¡•±Á•å½Ô­••À=58ÕÍ…‰±”°½¹Í¥‘•ÈÍÕÁÁ½ÉÑ¥¹œ½¹Ñ¥¹Õ•‘•Ù•±½Áµ•¹Ğ°½µÁ…Ñ¥‰¥±¥ÑäÑ•ÍÑ¥¹œ°…¹™ÕÑÕÉ”ÕÁ‘…Ñ•Ìè((ñÀ…±¥¸ô‰•¹Ñ•Èˆø(€€ñ„¡É•˜ô‰¡ÑÑÁÌè¼½‰½½ÍÑä¹Ñ¼½…Ù…é‰•¬ÈÈˆø(€€€€ñ¥µœÍÉŒôˆ¹¥Ñ¡Õˆ½…ÍÍ•ÑÌ½‰½½ÍÑäµÍÕÁÁ½ÉĞ¹ÍÙœˆİ¥‘Ñ ôˆàÀÀˆ…±Ğô‰MÕÁÁ½ÉĞ=µ•¹…µ¥¹!Õ‰U¹±½­•È½¸	½½ÍÑäˆø(€€ğ½„ø(ğ½Àø()e½Ô…¸…±Í¼ÍÕÁÁ½ÉĞÑ¡”ÁÉ½©•Ğ‰ä½¹ÑÉ¥‰ÕÑ¥¹œè((´ƒŠ¶@€¨©MÑ…È¨¨Ñ¡”É•Á½Í¥Ñ½Éä€€(´ƒÂ~6Ğ€¨©½É¬¨¨¥Ğ…¹…‘…ÁĞ¥ĞÑ¼å½ÕÈ=58µ½‘•°½Í•ÑÕÀ€€4(´ƒÂ~Bl=Á•¸…¸€¨©%ÍÍÕ”¨¨¥˜Í½µ•Ñ¡¥¹œ‰É•…­Ì½È=58¡…¹•Ì¥ÑÌ‰•¡…Ù¥½È€€4(´ƒÂ~RœAIÌ…É”İ•±½µ”€¡‰•ÑÑ•È‘•Ñ•Ñ¥½¸°Í…™•ÈÉ½±±‰…¬°¹•Ü•¹‘Á½¥¹ÑÌ¤4(4)UÍ”¥Ğ°Í¡…É”¥Ğ°…¹•¹©½ä„ÅÕ¥•Ñ•È=58•áÁ•É¥•¹”ƒÂ~f04(4(´´´4(4(ŒŒƒÂ~N1¥•¹Í”€¡5%P¤4(
+        throw "WingetCreate submission failed.`n$submissionOutput"
+    }
+
+    Write-Host $submissionOutput
+    $pullRequestMatch = [regex]::Match(
+        $submissionOutput,
+        'https://github\.com/microsoft/winget-pkgs/pull/\d+')
+
+    if ($pullRequestMatch.Success) {
+        return $pullRequestMatch.Value
+    }
+
+    return $null
+}
+
+if ($Submit -and $LocalOnly) {
+    throw "Use either -Submit or -LocalOnly, not both."
+}
+
+Ensure-Command -Name "winget"
+Ensure-Command -Name "wingetcreate"
+
+$projectReleaseInfo = Get-ProjectReleaseInfo -ProjectPath $projectPath
+$displayVersion = if ([string]::IsNullOrWhiteSpace($Version)) {
+    if ($NonInteractive) {
+        $projectReleaseInfo.DisplayVersion
+    }
+    else {
+        Read-Optional `
+            -Prompt "Release version" `
+            -DefaultValue $projectReleaseInfo.DisplayVersion
+    }
+}
+else {
+    $Version.Trim()
+}
+
+$packageVersion = ConvertTo-NormalizedVersion -Version $displayVersion
+$releaseTag = "v$displayVersion"
+$release = Get-GitHubRelease -RepositoryName $Repository -ReleaseTag $releaseTag
+$installerEntries = Get-ReleaseInstallerEntries `
+    -Release $release `
+    -DisplayVersion $displayVersion
+$releaseDate = ([DateTimeOffset]$release.published_at).UtcDateTime.ToString(
+    "yyyy-MM-dd",
+    [Globalization.CultureInfo]::InvariantCulture)
+$packageExists = Test-PackageExists -Identifier $PackageIdentifier
+$publishMode = Resolve-PublishMode `
+    -RequestedMode $Mode `
+    -PackageExists $packageExists `
+    -Identifier $PackageIdentifier
+
+$resolvedOutputDirectory = if ([string]::IsNullOrWhiteSpace($OutDirectory)) {
+    Join-Path $repositoryRoot "artifacts\winget\$releaseTag"
+}
+else {
+    [IO.Path]::GetFullPath($OutDirectory)
+}
+
+Write-Step -Message "WinGet publication plan"
+Write-Host "Mode              : $publishMode"
+Write-Host "Package identifier: $PackageIdentifier"
+Write-Host "Display version   : $displayVersion"
+Write-Host "Package version   : $packageVersion"
+Write-Host "Release tag       : $releaseTag"
+Write-Host "Release date      : $releaseDate"
+Write-Host "Output directory  : $resolvedOutputDirectory"
+foreach ($installerEntry in $installerEntries) {
+    Write-Host (
+        "Installer          : {0} -> {1}" -f
+        $installerEntry.Architecture,
+        $installerEntry.Url)
+}
+
+if ($PlanOnly) {
+    return
+}
+
+if (Test-Path -LiteralPath $resolvedOutputDirectory) {
+    Remove-Item -LiteralPath $resolvedOutputDirectory -Recurse -Force
+}
+New-Item -ItemType Directory -Path $resolvedOutputDirectory -Force | Out-Null
+
+if ($publishMode -eq "New") {
+    $identifierParts = $PackageIdentifier.Split('.')
+    $manifestRoot = Join-Path $resolvedOutputDirectory (
+        "manifests\{0}\{1}\{2}\{3}" -f
+        $identifierParts[0].Substring(0, 1).ToLowerInvariant(),
+        $identifierParts[0],
+        $identifierParts[1],
+        $packageVersion)
+
+    Write-Step -Message "Generating initial manifests"
+    New-InitialManifests `
+        -ManifestRoot $manifestRoot `
+        -Identifier $PackageIdentifier `
+        -PackageVersion $packageVersion `
+        -ReleaseTag $releaseTag `
+        -ReleaseDate $releaseDate `
+        -Name $packageName `
+        -InstallerEntries $installerEntries
+}
+else {
+    Write-Step -Message "Generating updated manifests"
+    Update-ExistingManifests `
+        -OutputDirectory $resolvedOutputDirectory `
+        -Identifier $PackageIdentifier `
+        -PackageVersion $packageVersion `
+        -ReleaseTag $releaseTag `
+        -ReleaseDate $releaseDate `
+        -InstallerEntries $installerEntries
+    $manifestRoot = Resolve-ManifestRoot `
+        -OutputDirectory $resolvedOutputDirectory `
+        -Identifier $PackageIdentifier `
+        -PackageVersion $packageVersion
+}
+
+Write-Step -Message "Validating manifests"
+Invoke-ManifestValidation -ManifestRoot $manifestRoot
+
+$shouldRunInstallTest = $InstallTest
+if (-not $NonInteractive -and -not $InstallTest) {
+    $installTestAnswer = Read-Optional `
+        -Prompt "Run local install and uninstall test? y/N" `
+        -DefaultValue "N"
+    $shouldRunInstallTest = $installTestAnswer -match '^(y|yes|Ğ´|Ğ´Ğ°)$'
+}
+
+if ($shouldRunInstallTest) {
+    Write-Step -Message "Testing local installation"
+    Invoke-ManifestInstallTest `
+        -ManifestRoot $manifestRoot `
+        -Identifier $PackageIdentifier `
+        -Name $packageName `
+        -KeepInstalled $KeepTestInstall
+}
+
+$shouldSubmit = $Submit
+if (-not $NonInteractive -and -not $Submit -and -not $LocalOnly) {
+    $submitAnswer = Read-Optional `
+        -Prompt "Submit PR to microsoft/winget-pkgs now? Y/n" `
+        -DefaultValue "Y"
+    $shouldSubmit = $submitAnswer -notmatch '^(n|no|Ğ½|Ğ½ĞµÑ‚)$'
+}
+
+if (-not $shouldSubmit) {
+    Write-Step -Message "Completed locally"
+    Write-Host "Manifest path: $manifestRoot"
+    return
+}
+
+Write-Step -Message "Submitting manifests"
+$pullRequestUrl = Submit-Manifests `
+    -ManifestRoot $manifestRoot `
+    -Identifier $PackageIdentifier `
+    -PackageVersion $packageVersion `
+    -PublishMode $publishMode
+
+Write-Step -Message "Completed"
+if ([string]::IsNullOrWhiteSpace($pullRequestUrl)) {
+    Write-Host "PR submitted. Check the WingetCreate output above for its URL."
+}
+else {
+    Write-Host "PR: $pullRequestUrl"
+}
+Write-Host "Manifest path: $manifestRoot"
