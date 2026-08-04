@@ -1,6 +1,10 @@
 <h1 align="center">Omen Gaming Hub Unlocker</h1>
 
 <p align="center">
+  <a href="README.md">🇬🇧 English</a> · <a href="README.ru.md">🇷🇺 Русский</a>
+</p>
+
+<p align="center">
   <a href="https://github.com/Avazbek22/OmenGamingHubUnlocker/releases">
     <img src="https://img.shields.io/github/downloads/Avazbek22/OmenGamingHubUnlocker/total?style=flat-square&amp;color=0078d4" alt="Total downloads">
   </a>
@@ -17,36 +21,145 @@
 </p>
 
 <p align="center">
-  Small helper tool for <strong>HP OMEN</strong> laptops and desktops.
+  A small helper tool for <strong>HP OMEN</strong> laptops and desktops.
 </p>
 
-It keeps **OMEN Gaming Hub** installed, but helps you prevent unwanted background behavior and “region-check” style network calls **before you are ready** (for example, before you connect a VPN).
+It keeps **OMEN Gaming Hub** installed, but stops it from starting on its own and calling home **before you're ready** — for example, before you turn on a VPN.
 
-✅ Typical scenario:
+✅ Typical use:
 
-1. Boot Windows  
-2. Turn on your VPN (if you need it)  
-3. Launch OMEN Gaming Hub manually  
+1. Start Windows
+2. Turn on your VPN (if you need one)
+3. Open OMEN Gaming Hub yourself, when you're ready
 
-…without OMEN waking up on its own and talking to HP services first.
+...instead of OMEN waking up on its own and talking to HP's servers first.
 
-> 🧭 If you found this repo because **“OMEN Gaming Hub is not available in your region / wrong region / region locked / country not supported”**:  
-> This tool does **not** “change the region” inside Windows/Microsoft Store.  
-> It helps by stopping auto-start + optionally blocking OMEN networking until *you* decide to open OMEN (often after VPN).
+> 🧭 If you're here because OMEN Gaming Hub says something like **"not available in your region," "wrong region,"** or **"country not supported"**:
+> This tool does **not** change your region in Windows or the Microsoft Store.
+> It stops OMEN from starting on its own and, if you choose, blocks its internet access — so you can turn on your VPN first, then open OMEN yourself.
 
 ---
 
 ## 📥 Download
 
-Get the latest **portable single-file** build from GitHub Releases:
+Get the latest **portable, single-file** build from GitHub Releases:
 
 - **Download:** https://github.com/Avazbek22/OmenGamingHubUnlocker/releases/latest
 
-> Tip: prefer **win-x64** for most modern OMEN devices.
+> Tip: use **win-x64** for most modern OMEN devices.
 
 ---
 
-## 🏗️ Build release artifacts
+## ✅ Requirements
+
+- Windows **10** or **11**
+- Administrator rights (Windows will ask automatically)
+
+---
+
+## 🚀 Quick start
+
+✅ Best practice: close OMEN Gaming Hub first (the window, and the tray icon if it's running).
+
+1. 📦 Download **OmenGamingHubUnlocker.exe** from Releases
+2. ▶️ Run it
+3. 🛡️ Approve the Administrator prompt
+4. 🎛️ Choose from the menu:
+
+   - **[1] Check status** — see what's currently on or off (services, tasks, firewall, hosts)
+   - **[2] Dry run** — preview what would change, without changing anything yet
+   - **[3] Activate scripts** — turn the blocks on
+   - **[4] Disable scripts** — undo everything and restore your original settings
+   - **[5] Reset OMEN & Activate** — reset OMEN's saved data, then turn the blocks back on
+   - **[6] Help**
+   - **[7] About**
+   - **[8] Change language**
+   - **[9] Support the project (Boosty)**
+   - **[0] Exit**
+
+5. 🔄 A reboot is **optional**, but it's a good way to confirm everything starts up clean.
+
+---
+
+## 🧰 What "Activate scripts" does
+
+- Blocks OMEN's internet access, with a firewall rule that survives OMEN updates
+- Sets OMEN's background services to "Manual" and stops the ones currently running
+- Turns off OMEN's scheduled tasks and stops any that are running
+- Closes OMEN's background processes
+- Removes OMEN from Windows startup — your original settings are saved first, so this can always be undone
+- Optionally blocks known HP/OMEN web addresses
+- Double-checks everything actually stayed off before saying "done"
+
+Your previous settings are always saved before anything changes.
+
+---
+
+## ♻️ What "Disable scripts" does
+
+- Puts services and scheduled tasks back exactly how they were
+- Restores your original Windows startup entries
+- Checks everything is back to normal before removing the network block
+- Removes only the firewall rules and hosts entries this tool created
+- If something can't be fully restored, it keeps the network block on, to stay safe
+
+---
+
+## 🧱 The firewall rule survives OMEN updates
+
+OMEN Gaming Hub updates (especially through the Microsoft Store) often change file paths and executable names. Most simple firewall blocks break after an update — this one doesn't.
+
+The main rule is tied to OMEN's Store package ID, not to a specific file path. Every time you run Activate, the tool also:
+
+- keeps that main rule active while it checks for new file paths
+- finds any new OMEN files and adds rules for them
+- removes old rules that no longer apply
+- confirms every current OMEN file is actually blocked
+
+This closes a gap that used to exist between an OMEN reset and the firewall catching up.
+
+---
+
+## 🧠 What this tool is — and isn't
+
+✅ This tool:
+
+- does **not** uninstall OMEN Gaming Hub
+- does **not** remove drivers or core Windows components
+- only touches:
+  - the startup type of selected services
+  - selected scheduled tasks
+  - HP/OMEN startup entries in the registry
+  - optional firewall rules it creates itself
+  - optional hosts file entries it creates itself
+
+❌ This tool is **not**:
+
+- a crack, patch, or permanent region changer
+- a Microsoft Store region bypass by itself
+
+---
+
+## 🧩 Technical overview (for devs)
+
+- **Language:** C#
+- **Runtime:** .NET 10
+- **App type:** Console app (Windows 10/11), single-file portable build
+- **Elevation:** Uses an application manifest to request Administrator (UAC) on startup
+- **Core operations:**
+  - service management via Windows APIs, with safe fallbacks where needed
+  - scheduled task disable and running-instance termination
+  - registry Run entry cleanup (common locations)
+  - package-SID and executable firewall rules, with COM/PowerShell fallback and post-write verification
+  - atomic, encoding-preserving hosts and rollback-state writes
+  - interactive-user validation before AppX or HKCU operations
+
+The UI is designed to be predictable:
+- **Status** = current facts
+- **Dry run** = "will do" predictions
+- **Activate/Disable** = actual changes + a final snapshot
+
+### Build release artifacts
 
 Run the release script from a clean local `main` branch that exactly matches `origin/main`:
 
@@ -58,11 +171,11 @@ The script runs the test suite and produces self-contained single-file executabl
 
 Version properties have distinct purposes and are validated before every release:
 
-- `InformationalVersion` is the public GitHub version used by tags and artifact names, such as `3.2`.
-- `Version` is the .NET build version, such as `3.2.0`.
-- `FileVersion` and `AssemblyVersion` are the four-part Windows and WinGet version, such as `3.2.0.0`.
+- `InformationalVersion` is the public GitHub version used by tags and artifact names, e.g. `3.2`.
+- `Version` is the .NET build version, e.g. `3.2.0`.
+- `FileVersion` and `AssemblyVersion` are the four-part Windows and WinGet version, e.g. `3.2.0.0`.
 
-The script stops if these values do not describe the same release.
+The script stops if these values don't describe the same release.
 
 ### Publish to WinGet
 
@@ -82,155 +195,41 @@ For a non-interactive update after publishing a GitHub release:
 
 Prerequisites:
 
-- Current Windows Package Manager client.
-- Current `Microsoft.WingetCreate` package.
-- GitHub authentication configured in WingetCreate for PR submission.
+- Current Windows Package Manager client
+- Current `Microsoft.WingetCreate` package
+- GitHub authentication configured in WingetCreate for PR submission
 
-> WinGet treats Omen Gaming Hub Unlocker as a portable application. `winget uninstall` removes the executable and command alias, but it does not reverse protection previously applied to Windows. Run **Restore original settings** before uninstalling when you also want to remove the managed firewall, hosts, service, task, and startup changes.
-
----
-
-## ✅ Requirements
-
-- Windows **10** or **11**
-- Administrator rights (**UAC is requested automatically**)
-
----
-
-## 🚀 Quick start
-
-✅ Best practice: close OMEN Gaming Hub first (window + tray background icons, if possible).
-
-1. 📦 Download **OmenGamingHubUnlocker.exe** from Releases
-2. ▶️ Run **OmenGamingHubUnlocker.exe**
-3. 🛡️ Approve the UAC prompt (Administrator)
-4. 🎛️ Menu:
-
-   - **[1] Check status** — shows current state (services / tasks / firewall / hosts)
-   - **[2] Dry run** — deep analysis + preview (“Will …” predictions)
-   - **[3] Activate scripts** — applies changes
-   - **[4] Disable scripts** — restores the exact saved startup state and removes this tool's network blocks
-   - **[5] Reset OMEN & Activate** — resets AppX data while keeping OMEN isolated, then re-applies protection
-   - **[6] Help**
-   - **[7] About**
-   - **[8] Change language**
-   - **[9] Support the project (Boosty)**
-   - **[0] Exit**
-
-5. 🔄 Reboot is **optional**, but recommended if you want a clean “startup verification”.
-
----
-
-## 🧰 What “Activate scripts” does
-
-When you run **Activate scripts**, the tool:
-
-- **Firewall:** creates a version-independent package-SID block and explicit outbound blocks for current OMEN executables
-- **Services:** sets OMEN-owned services to **Manual** and stops running instances
-- **Tasks:** disables OMEN scheduled tasks and stops running instances
-- **Processes:** terminates discovered package and known external OMEN background processes
-- **Run keys:** removes matching OMEN autostart entries after saving their exact values
-- **Hosts (optional):** adds `127.0.0.1 ...` mappings for known HP/OMEN endpoints
-- **Verification:** requires two consecutive stable snapshots before reporting success
-
-Rollback state is saved before startup settings are changed.
-
----
-
-## ♻️ What “Disable scripts” does
-
-When you run **Disable scripts**, the tool:
-
-- Restores the exact saved service startup and running states, including Delayed Auto Start
-- Restores saved task enabled states and Run-entry values
-- Verifies startup restoration before removing network protection
-- Removes only firewall rules and hosts entries owned by this tool
-- Keeps the rollback file and network protection if restoration is incomplete
-
----
-
-## 🧱 Firewall rules are update-safe (important)
-
-OMEN Gaming Hub updates (especially from Microsoft Store) can change internal paths/executables.
-
-The primary firewall rule is bound to the stable Store package SID rather than a versioned installation path. On each activation the tool also:
-
-- keeps the package rule active while path rules are refreshed
-- re-discovers package and external OMEN executables
-- removes obsolete path rules
-- verifies every current executable has an enabled outbound block rule
-
-This avoids the unprotected window that previously existed between AppX reset and firewall refresh.
-
----
-
-## 🧠 What this tool is (and is not)
-
-✅ This tool:
-
-- does **not** uninstall OMEN Gaming Hub
-- does **not** remove drivers or core Windows components
-- only touches:
-  - startup type of selected services
-  - selected scheduled tasks
-  - HP/OMEN Run entries in the registry
-  - optional firewall rules created by this tool
-  - optional hosts entries created by this tool
-
-❌ This tool is not:
-
-- a crack / patch / permanent “region changer”
-- a Microsoft Store region bypass by itself
-
----
-
-## 🧩 Technical overview (for devs)
-
-- **Language:** C#
-- **Runtime:** **.NET 10**
-- **App type:** Console app (Windows 10/11), single-file portable build
-- **Elevation:** Uses an application manifest to request **Administrator** (UAC) on startup
-- **Core operations:**
-  - services management via Windows APIs (and safe fallbacks where needed)
-  - scheduled task disable and running-instance termination
-  - registry Run entries cleanup (common locations)
-  - package-SID and executable firewall rules with COM/PowerShell fallback and post-write verification
-  - atomic, encoding-preserving hosts and rollback-state writes
-  - interactive-user validation before AppX or HKCU operations
-
-The UI is designed to be predictable:
-- **Status** = current facts  
-- **Dry run** = “Will …” predictions  
-- **Activate/Disable** = actionable changes + final snapshot  
+> WinGet treats Omen Gaming Hub Unlocker as a portable application. `winget uninstall` removes the executable and command alias, but it does not reverse protection previously applied to Windows. Run **Disable scripts** before uninstalling if you also want to remove the managed firewall, hosts, service, task, and startup changes.
 
 ---
 
 ## 🧩 Troubleshooting
 
-### SmartScreen: “Windows protected your PC”
-Portable unsigned tools from GitHub may trigger SmartScreen:
+### SmartScreen: "Windows protected your PC"
+
+Portable, unsigned tools from GitHub can trigger SmartScreen:
 
 - Click **More info** → **Run anyway**
 
 ### OMEN still flashes for a second on login
-UWP apps can briefly initialize during login/update checks.  
-If services/tasks are tamed and (optionally) network is blocked, a short flicker does not necessarily mean it phones home.
 
-### Search keywords (how people usually find this)
-If you’re here because of one of these:
-- “OMEN Gaming Hub not available in my region”
-- “OMEN Gaming Hub wrong region”
-- “OMEN Gaming Hub region locked”
-- “HP OMEN Gaming Hub country not supported”
-- “OMEN Gaming Hub VPN workaround”
+UWP apps can briefly initialize during login or update checks. If services and tasks are turned off (and network is optionally blocked), a short flicker doesn't necessarily mean it's calling home.
 
-This tool is specifically made for the workflow: **boot → VPN → launch OMEN manually**.
+### Found this by searching for:
+
+- "OMEN Gaming Hub not available in my region"
+- "OMEN Gaming Hub wrong region"
+- "OMEN Gaming Hub region locked"
+- "HP OMEN Gaming Hub country not supported"
+- "OMEN Gaming Hub VPN workaround"
+
+This tool is built exactly for that workflow: **boot → VPN → open OMEN yourself.**
 
 ---
 
 ## 🤝 Support the project
 
-OmenGamingHubUnlocker is free and open source. If it helped you keep OMEN usable, consider supporting continued development, compatibility testing, and future updates:
+Omen Gaming Hub Unlocker is free and open source. If it helped you keep OMEN usable, you can support continued development, compatibility testing, and future updates:
 
 <p align="center">
   <a href="https://boosty.to/avazbek22">
@@ -238,15 +237,15 @@ OmenGamingHubUnlocker is free and open source. If it helped you keep OMEN usable
   </a>
 </p>
 
-You can also support the project by contributing:
+You can also help by:
 
-- ⭐ **Star** the repository  
-- 🍴 **Fork** it and adapt it to your OMEN model/setup  
-- 🐛 Open an **Issue** if something breaks or OMEN changes its behavior  
-- 🔧 PRs are welcome (better detection, safer rollback, new endpoints)
-
-Use it, share it, and enjoy a quieter OMEN experience 🙌
+- ⭐ **Starring** the repository
+- 🍴 **Forking** it and adapting it to your OMEN model or setup
+- 🐛 Opening an **Issue** if something breaks or OMEN changes its behavior
+- 🔧 Sending a **PR** — better detection, safer rollback, new endpoints are all welcome
 
 ---
 
-## 📄 License (MIT)
+## 📄 License
+
+MIT — see [LICENSE](LICENSE) for details.
