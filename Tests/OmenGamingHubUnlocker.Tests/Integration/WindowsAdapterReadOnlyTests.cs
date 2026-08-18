@@ -19,13 +19,43 @@ public sealed class WindowsAdapterReadOnlyTests
     [Fact]
     public void FirewallInspection_ShouldReturnStructuredState()
     {
-        var status = FirewallManager.InspectProtection(OmenTargets.FirewallRulePrefix);
+        var status = new WindowsUnlockerOperations().InspectFirewallProtection();
 
         Assert.True(status.QuerySucceeded, status.Error);
         Assert.NotNull(status.Targets);
         Assert.NotNull(status.Rules);
         Assert.NotNull(status.MissingExecutableRules);
         Assert.NotNull(status.StaleExecutableRules);
+
+        if (status.Targets.Package is not null)
+        {
+            Assert.True(
+                status.Targets.DiscoveryComplete,
+                string.Join(Environment.NewLine, status.Targets.ScanErrors));
+            Assert.True(status.Targets.PackageDirectoryReady);
+            Assert.NotEmpty(status.Targets.PackageExecutables);
+        }
+    }
+
+    [Fact]
+    public void CompositeFirewallDiscovery_ShouldCoverTrustedOmenServiceExecutables()
+    {
+        var operations = new WindowsUnlockerOperations();
+        var targets = operations.DiscoverFirewallTargets();
+
+        foreach (var service in operations.QueryTargetServices())
+        {
+            if (!ExecutablePathResolver.TryResolveExistingExecutable(service.PathName, out var executablePath) ||
+                !OmenExecutableTrust.IsTrustedOmenExecutable(
+                    executablePath,
+                    service.Name,
+                    service.DisplayName))
+            {
+                continue;
+            }
+
+            Assert.Contains(executablePath, targets.AllExecutables, StringComparer.OrdinalIgnoreCase);
+        }
     }
 
     [Fact]

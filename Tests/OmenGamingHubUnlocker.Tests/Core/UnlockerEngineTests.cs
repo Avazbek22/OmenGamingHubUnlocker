@@ -41,6 +41,7 @@ public sealed class UnlockerEngineTests
         Assert.Equal("Automatic", service.OriginalStartMode);
         Assert.True(service.OriginalRunning);
         Assert.True(Assert.Single(stateStore.State.Tasks).OriginalEnabled);
+        Assert.True(Assert.Single(stateStore.State.Tasks).OriginalRunning);
         Assert.Single(stateStore.State.RunEntries);
     }
 
@@ -129,6 +130,57 @@ public sealed class UnlockerEngineTests
 
         Assert.True(report.Success);
         Assert.Equal(2, delay.WaitCount);
+    }
+
+    [Fact]
+    public void Activate_ShouldFailWhenAProcessRespawnsAfterVerificationButBeforeTheFinalSnapshot()
+    {
+        var (_, operations, _, _) = CreateEngineWithActiveOmen();
+        operations.ProcessQuerySteps.Enqueue(_ => { });
+        operations.ProcessQuerySteps.Enqueue(_ => { });
+        operations.ProcessQuerySteps.Enqueue(_ => { });
+        operations.ProcessQuerySteps.Enqueue(platform =>
+            platform.Processes.Add(new ProcessItem(
+                99,
+                "OmenCommandCenterBackground",
+                platform.Executables[0])));
+        var journal = new RecordingOperationJournalStore();
+        var engine = new UnlockerEngine(
+            operations,
+            new InMemoryStateStore(),
+            new RecordingDelay(),
+            new RecordingOperationLock(),
+            journal);
+
+        var report = engine.Activate(UnlockerOptions.ForActivate());
+
+        Assert.False(report.Success);
+        Assert.NotNull(journal.Entry);
+        Assert.Contains(report.Lines, line =>
+            line.Level == "ERR" &&
+            line.Text.Contains("stabil", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(report.SnapshotsAfter, snapshot =>
+            snapshot.Area == "Processes" && snapshot.Result == "WARN");
+    }
+
+    [Fact]
+    public void Activate_ShouldIgnoreFinalNetworkSnapshotsForExplicitlyUnmanagedAreas()
+    {
+        var (engine, _, _, _) = CreateEngineWithActiveOmen();
+        var options = new UnlockerOptions
+        {
+            ManageFirewall = false,
+            ManageHosts = false,
+            TryKillProcesses = true
+        };
+
+        var report = engine.Activate(options);
+
+        Assert.True(report.Success, string.Join(Environment.NewLine, report.Lines.Select(line => line.Text)));
+        Assert.Contains(report.SnapshotsAfter, snapshot =>
+            snapshot.Area == "Firewall" && snapshot.Result == "WARN");
+        Assert.Contains(report.SnapshotsAfter, snapshot =>
+            snapshot.Area == "hosts" && snapshot.Result == "WARN");
     }
 
     [Fact]
@@ -251,6 +303,158 @@ public sealed class UnlockerEngineTests
     }
 
     [Fact]
+    public void Reset_ShouldWaitForACompleteStableExecutableSet()
+    {
+        var (engine, operations, _, delay) = CreateEngineWithActiveOmen();
+        operations.OnReset = platform =>
+        {
+            platform.Package = platform.Package! with
+            {
+                PackageFullName = "AD2F1837.OMENCommandCenter_2.0.0.0_x64__test",
+                InstallLocation = @"C:\Program Files\WindowsApps\Omen\v2"
+            };
+            ReplaceExecutables(platform, 5);
+            platform.TargetDiscoverySteps.Enqueue(_ => { });
+            platform.TargetDiscoverySteps.Enqueue(current => ReplaceExecutables(current, 33));
+            platform.TargetDiscoverySteps.Enqueue(_ => { });
+        };
+
+        var report = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
+
+        Assert.True(report.Success);
+        Assert.Equal(33, operations.Firewall.Targets.AllExecutables.Count);
+        Assert.Equal(5, delay.WaitCount);
+        Assert.True(operations.FirewallCleanupRequests.Last());
+        Assert.DoesNotContain(report.Lines, line => line.Level == "ERR");
+    }
+
+    [Fact]
+    public void Reset_ShouldWaitForThePackageToBeRegisteredAgain()
+    {
+        var (engine, operations, _, delay) = CreateEngineWithActiveOmen();
+        var restoredPackage = operations.Package! with
+        {
+            PackageFullName = "AD2F1837.OMENCommandCenter_2.0.0.0_x64__test",
+            InstallLocation = @"C:\Program Files\WindowsApps\Omen\v2"
+        };
+        operations.OnReset = platform =>
+        {
+            platform.Package = null;
+            platform.Executables.Clear();
+            platform.TargetDiscoverySteps.Enqueue(_ => { });
+            platform.TargetDiscoverySteps.Enqueue(current =>
+            {
+                current.Package = restoredPackage;
+                current.Executables.Add(@"C:\Program Files\WindowsApps\Omen\v2\Omen.exe");
+            });
+            platform.TargetDiscoverySteps.Enqueue(_ => { });
+        };
+
+        var report = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
+
+        Assert.True(report.Success);
+        Assert.Equal(restoredPackage, operations.Firewall.Targets.Package);
+        Assert.Equal(5, delay.WaitCount);
+    }
+
+    [Fact]
+    public void Reset_ShouldRetryWhenAnExecutableAppearsDuringStabilization()
+    {
+        var (engine, operations, _, delay) = CreateEngineWithActiveOmen();
+        const string lateExecutable = @"C:\Program Files\WindowsApps\Omen\v2\LateBackground.exe";
+        operations.OnReset = platform =>
+        {
+            platform.Package = platform.Package! with
+            {
+                PackageFullName = "AD2F1837.OMENCommandCenter_2.0.0.0_x64__test",
+                InstallLocation = @"C:\Program Files\WindowsApps\Omen\v2"
+            };
+            platform.Executables.Clear();
+            platform.Executables.Add(@"C:\Program Files\WindowsApps\Omen\v2\Omen.exe");
+            platform.FirewallInspectionSteps.Enqueue(_ => { });
+            platform.FirewallInspectionSteps.Enqueue(current =>
+            {
+                current.Executables.Add(lateExecutable);
+                current.Firewall = current.BuildFirewallStatus(isComplete: false);
+            });
+        };
+
+        var report = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
+
+        Assert.True(report.Success);
+        Assert.Contains(lateExecutable, operations.Firewall.Targets.AllExecutables);
+        Assert.Equal(5, delay.WaitCount);
+        Assert.DoesNotContain(report.Lines, line =>
+            line.Level == "ERR" &&
+            line.Text.Contains("firewall", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Reset_ShouldRecoverFromATransientFirewallMutationFailure()
+    {
+        var (engine, operations, _, _) = CreateEngineWithActiveOmen();
+        operations.OnReset = platform => platform.FirewallActivationFailuresRemaining = 1;
+
+        var report = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
+
+        Assert.True(report.Success);
+        Assert.True(operations.Firewall.IsComplete);
+        Assert.Equal(0, operations.FirewallActivationFailuresRemaining);
+        Assert.DoesNotContain(report.Lines, line => line.Level == "ERR");
+    }
+
+    [Fact]
+    public void Reset_ShouldStopAfterBoundedRetriesWhenFirewallMutationKeepsFailing()
+    {
+        var (engine, operations, _, delay) = CreateEngineWithActiveOmen();
+        operations.OnReset = platform => platform.FailFirewallActivation = true;
+
+        var report = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
+
+        Assert.False(report.Success);
+        Assert.Equal(10, delay.WaitCount);
+        Assert.DoesNotContain(true, operations.FirewallCleanupRequests);
+        Assert.Contains(report.Lines, line => line.Level == "ERR");
+    }
+
+    [Fact]
+    public void Reset_ShouldRetryTransientStaleRuleCleanupFailure()
+    {
+        var (engine, operations, _, delay) = CreateEngineWithActiveOmen();
+        operations.OnReset = platform => platform.FirewallCleanupFailuresRemaining = 1;
+
+        var report = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
+
+        Assert.True(report.Success);
+        Assert.Equal(7, delay.WaitCount);
+        Assert.Equal(0, operations.FirewallCleanupFailuresRemaining);
+        Assert.Equal(2, operations.FirewallCleanupRequests.Count(requested => requested));
+        Assert.DoesNotContain(report.Lines, line => line.Level == "ERR");
+    }
+
+    [Fact]
+    public void Reset_ShouldFailSafelyWhenPackageDiscoveryNeverCompletes()
+    {
+        var (engine, operations, _, delay) = CreateEngineWithActiveOmen();
+        operations.OnReset = platform =>
+        {
+            platform.PackageDirectoryReady = false;
+            platform.FirewallDiscoveryErrors = ["package directory is still being restored"];
+            platform.Processes.Add(new ProcessItem(20, "NewBackground", platform.Executables[0]));
+        };
+
+        var report = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
+
+        Assert.False(report.Success);
+        Assert.Equal(23, delay.WaitCount);
+        Assert.NotEmpty(operations.Processes);
+        Assert.DoesNotContain(true, operations.FirewallCleanupRequests);
+        Assert.Contains(report.Lines, line =>
+            line.Level == "ERR" &&
+            line.Text.Contains("firewall", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void Disable_ShouldRestoreExactStateBeforeRemovingNetworkProtection()
     {
         var operations = CreateTamedOperations();
@@ -286,6 +490,78 @@ public sealed class UnlockerEngineTests
         Assert.True(stateStore.ClearCalled);
         Assert.DoesNotContain(report.SnapshotsAfter, snapshot => snapshot.Result == "WARN");
         Assert.DoesNotContain(report.SnapshotsAfter, snapshot => snapshot.Result == "ERR");
+    }
+
+    [Fact]
+    public void Disable_ShouldRestorePreviouslyRunningScheduledTask()
+    {
+        var operations = CreateTamedOperations();
+        var stateStore = new InMemoryStateStore
+        {
+            State = new UnlockerState
+            {
+                Tasks = [new TaskBackup(@"\OmenTask", true, true)]
+            }
+        };
+        var engine = new UnlockerEngine(operations, stateStore, new RecordingDelay());
+
+        var report = engine.Disable(UnlockerOptions.ForDisable());
+
+        Assert.True(report.Success);
+        var task = Assert.Single(operations.Tasks);
+        Assert.True(task.Enabled);
+        Assert.True(task.RequiresStop);
+        Assert.Contains("StartTasks", operations.Calls);
+    }
+
+    [Fact]
+    public void Disable_ShouldKeepProtection_WhenNoActivationBackupExists()
+    {
+        var operations = CreateTamedOperations();
+        var stateStore = new InMemoryStateStore();
+        var engine = new UnlockerEngine(operations, stateStore, new RecordingDelay());
+
+        var report = engine.Disable(UnlockerOptions.ForDisable());
+
+        Assert.False(report.Success);
+        Assert.DoesNotContain("DisableFirewall", operations.Calls);
+        Assert.DoesNotContain("DisableHosts", operations.Calls);
+        Assert.True(operations.Firewall.IsComplete);
+        Assert.True(operations.Hosts.AllBlocked);
+        Assert.False(stateStore.ClearCalled);
+    }
+
+    [Fact]
+    public void Disable_ShouldNotOverwriteRunEntryChangedAfterActivation()
+    {
+        var operations = CreateTamedOperations();
+        operations.RunEntries.Add(new RunEntry(
+            RegistryHive.CurrentUser,
+            RegistryView.Registry64,
+            "OmenBackground",
+            "Changed.exe"));
+        var stateStore = new InMemoryStateStore
+        {
+            State = new UnlockerState
+            {
+                RunEntries =
+                [
+                    new RunEntryBackup(
+                        RegistryHive.CurrentUser,
+                        RegistryView.Registry64,
+                        "OmenBackground",
+                        "Original.exe")
+                ]
+            }
+        };
+        var engine = new UnlockerEngine(operations, stateStore, new RecordingDelay());
+
+        var report = engine.Disable(UnlockerOptions.ForDisable());
+
+        Assert.False(report.Success);
+        Assert.Equal("Changed.exe", Assert.Single(operations.RunEntries).Value);
+        Assert.DoesNotContain("DisableFirewall", operations.Calls);
+        Assert.True(operations.Firewall.IsComplete);
     }
 
     [Fact]
@@ -342,6 +618,43 @@ public sealed class UnlockerEngineTests
     }
 
     [Fact]
+    public void Activate_ShouldNotMutate_WhenAnotherOperationOwnsTheMachineLock()
+    {
+        var operations = CreateTamedOperations();
+        var operationLock = new RecordingOperationLock { Available = false };
+        var engine = new UnlockerEngine(
+            operations,
+            new InMemoryStateStore(),
+            new RecordingDelay(),
+            operationLock);
+
+        var report = engine.Activate(UnlockerOptions.ForActivate());
+
+        Assert.False(report.Success);
+        Assert.Equal(1, operationLock.AcquireCount);
+        Assert.DoesNotContain("ActivateFirewall", operations.Calls);
+        Assert.DoesNotContain("SetServiceModes", operations.Calls);
+    }
+
+    [Fact]
+    public void Activate_ShouldReleaseMachineLockAfterCompletion()
+    {
+        var operations = CreateTamedOperations();
+        var operationLock = new RecordingOperationLock();
+        var engine = new UnlockerEngine(
+            operations,
+            new InMemoryStateStore(),
+            new RecordingDelay(),
+            operationLock);
+
+        var report = engine.Activate(UnlockerOptions.ForActivate());
+
+        Assert.True(report.Success);
+        Assert.Equal(1, operationLock.AcquireCount);
+        Assert.Equal(1, operationLock.ReleaseCount);
+    }
+
+    [Fact]
     public void Status_ShouldWarnForRulesThatCoverOnlyAnOldVersion()
     {
         var operations = CreateTamedOperations();
@@ -370,6 +683,320 @@ public sealed class UnlockerEngineTests
         Assert.Equal("WARN", firewall.Result);
         Assert.Contains("missing=1", firewall.Current);
         Assert.Contains("stale=1", firewall.Current);
+    }
+
+    [Fact]
+    public void Status_ShouldWarnWhenExecutableDiscoveryIsIncomplete()
+    {
+        var operations = CreateTamedOperations();
+        operations.PackageDirectoryReady = false;
+        operations.FirewallDiscoveryErrors = ["package directory unavailable"];
+        operations.Firewall = operations.BuildFirewallStatus(isComplete: true);
+        var engine = new UnlockerEngine(operations, new InMemoryStateStore(), new RecordingDelay());
+
+        var report = engine.GetStatusReport();
+
+        var firewall = Assert.Single(report.Snapshots, snapshot => snapshot.Area == "Firewall");
+        Assert.Equal("WARN", firewall.Result);
+    }
+
+    [Fact]
+    public void Activate_ShouldRecoverInterruptedNetworkIsolationBeforeStartupMutations()
+    {
+        var (_, operations, stateStore, delay) = CreateEngineWithActiveOmen();
+        var now = DateTimeOffset.UtcNow;
+        var journal = new RecordingOperationJournalStore
+        {
+            Entry = new OperationJournalEntry(
+                Guid.NewGuid(),
+                UnlockerOperationKind.ResetAndReapply,
+                UnlockerOperationPhase.ResettingPackage,
+                true,
+                true,
+                "S-1-5-21-TEST",
+                now,
+                now)
+        };
+        var engine = new UnlockerEngine(
+            operations,
+            stateStore,
+            delay,
+            new RecordingOperationLock(),
+            journal);
+
+        var report = engine.Activate(UnlockerOptions.ForActivate());
+
+        Assert.True(report.Success);
+        Assert.Null(journal.Entry);
+        AssertBefore(operations.Calls, "ActivateFirewall", "SetServiceModes");
+        Assert.Contains(report.Lines, line => line.Level == "WARN");
+    }
+
+    [Fact]
+    public void Activate_ShouldAbortWhenInterruptedNetworkIsolationCannotBeRecovered()
+    {
+        var (_, operations, stateStore, delay) = CreateEngineWithActiveOmen();
+        operations.FailFirewallActivation = true;
+        var now = DateTimeOffset.UtcNow;
+        var pending = new OperationJournalEntry(
+            Guid.NewGuid(),
+            UnlockerOperationKind.Disable,
+            UnlockerOperationPhase.RemovingNetworkIsolation,
+            true,
+            true,
+            "S-1-5-21-TEST",
+            now,
+            now);
+        var journal = new RecordingOperationJournalStore { Entry = pending };
+        var engine = new UnlockerEngine(
+            operations,
+            stateStore,
+            delay,
+            new RecordingOperationLock(),
+            journal);
+
+        var report = engine.Activate(UnlockerOptions.ForActivate());
+
+        Assert.False(report.Success);
+        Assert.Equal(pending.OperationId, journal.Entry?.OperationId);
+        Assert.DoesNotContain("SetServiceModes", operations.Calls);
+        Assert.DoesNotContain("TerminateProcesses", operations.Calls);
+    }
+
+    [Fact]
+    public void Activate_ShouldNotMutateWhenTheRecoveryCheckpointCannotBeSaved()
+    {
+        var (_, operations, stateStore, delay) = CreateEngineWithActiveOmen();
+        var journal = new RecordingOperationJournalStore
+        {
+            FailAdvanceAt = UnlockerOperationPhase.ApplyingNetworkIsolation
+        };
+        var engine = new UnlockerEngine(
+            operations,
+            stateStore,
+            delay,
+            new RecordingOperationLock(),
+            journal);
+
+        var report = engine.Activate(UnlockerOptions.ForActivate());
+
+        Assert.False(report.Success);
+        Assert.DoesNotContain("ActivateFirewall", operations.Calls);
+        Assert.DoesNotContain("SetServiceModes", operations.Calls);
+        Assert.NotNull(journal.Entry);
+    }
+
+    [Fact]
+    public void Disable_ShouldSucceedWhenBackedUpComponentsWereRemovedByAnUpdate()
+    {
+        var operations = CreateTamedOperations();
+        operations.Services.Clear();
+        operations.Tasks.Clear();
+        var stateStore = new InMemoryStateStore
+        {
+            State = new UnlockerState
+            {
+                Services = [new ServiceBackup("HPOmenCap", "Automatic", true, PathName: @"C:\HP\v1\Omen.exe")],
+                Tasks =
+                [
+                    new TaskBackup(
+                        @"\OmenTask",
+                        true,
+                        true,
+                        ScheduledTaskRuntimeState.Running,
+                        [@"C:\HP\v1\Task.exe"])
+                ]
+            }
+        };
+        var engine = new UnlockerEngine(operations, stateStore, new RecordingDelay());
+
+        var report = engine.Disable(UnlockerOptions.ForDisable());
+
+        Assert.True(report.Success);
+        Assert.True(stateStore.ClearCalled);
+        Assert.Equal(0, operations.Firewall.RuleCount);
+        Assert.Equal(0, operations.Hosts.ManagedLineCount);
+        Assert.Contains(report.Lines, line => line.Level == "WARN");
+    }
+
+    [Fact]
+    public void Disable_ShouldKeepProtectionWhenAServiceIdentityWasReplaced()
+    {
+        var operations = CreateTamedOperations();
+        operations.Services[0] = operations.Services[0] with
+        {
+            PathName = @"C:\HP\v2\Omen.exe"
+        };
+        var stateStore = new InMemoryStateStore
+        {
+            State = new UnlockerState
+            {
+                Services =
+                [
+                    new ServiceBackup(
+                        "HPOmenCap",
+                        "Automatic",
+                        true,
+                        PathName: @"C:\HP\v1\Omen.exe")
+                ]
+            }
+        };
+        var engine = new UnlockerEngine(operations, stateStore, new RecordingDelay());
+
+        var report = engine.Disable(UnlockerOptions.ForDisable());
+
+        Assert.False(report.Success);
+        Assert.True(operations.Firewall.IsComplete);
+        Assert.True(operations.Hosts.AllBlocked);
+        Assert.False(stateStore.ClearCalled);
+    }
+
+    [Fact]
+    public void Disable_ShouldNotForceStartATaskThatWasOriginallyQueued()
+    {
+        var operations = new FakeUnlockerOperations();
+        operations.Tasks.Add(new TaskItem(
+            @"\OmenTask",
+            false,
+            "Queued",
+            [@"C:\HP\OmenTask.exe"]));
+        var stateStore = new InMemoryStateStore();
+        var engine = new UnlockerEngine(operations, stateStore, new RecordingDelay());
+
+        Assert.True(engine.Activate(UnlockerOptions.ForActivate()).Success);
+        operations.Calls.Clear();
+
+        var report = engine.Disable(UnlockerOptions.ForDisable());
+
+        Assert.True(report.Success);
+        Assert.Equal("Ready", Assert.Single(operations.Tasks).State);
+        Assert.Contains(report.Lines, line => line.Level == "WARN");
+    }
+
+    [Fact]
+    public void Disable_ShouldRestoreComponentsThatWereRunningWhileDisabled()
+    {
+        var operations = CreateTamedOperations();
+        var stateStore = new InMemoryStateStore
+        {
+            State = new UnlockerState
+            {
+                Services = [new ServiceBackup("HPOmenCap", "Disabled", true)],
+                Tasks =
+                [
+                    new TaskBackup(
+                        @"\OmenTask",
+                        false,
+                        true,
+                        ScheduledTaskRuntimeState.Running)
+                ]
+            }
+        };
+        var engine = new UnlockerEngine(operations, stateStore, new RecordingDelay());
+
+        var report = engine.Disable(UnlockerOptions.ForDisable());
+
+        Assert.True(report.Success, string.Join(Environment.NewLine, report.Lines.Select(line => line.Text)));
+        var service = Assert.Single(operations.Services);
+        var task = Assert.Single(operations.Tasks);
+        Assert.Equal("Disabled", service.StartMode);
+        Assert.Equal("Running", service.State);
+        Assert.False(task.Enabled);
+        Assert.Equal("Running", task.State);
+        AssertBefore(operations.Calls, "StartTasks", "DisableFirewall");
+        AssertBefore(operations.Calls, "StartServices", "DisableFirewall");
+    }
+
+    [Fact]
+    public void Disable_ShouldKeepNetworkProtectionWhenARestoredTaskExitsBeforeVerification()
+    {
+        var operations = CreateTamedOperations();
+        operations.TaskQuerySteps.Enqueue(platform =>
+        {
+            platform.Tasks[0] = platform.Tasks[0] with { State = "Ready" };
+        });
+        var stateStore = new InMemoryStateStore
+        {
+            State = new UnlockerState
+            {
+                Tasks = [new TaskBackup(@"\OmenTask", true, true)]
+            }
+        };
+        var engine = new UnlockerEngine(operations, stateStore, new RecordingDelay());
+
+        var report = engine.Disable(UnlockerOptions.ForDisable());
+
+        Assert.False(report.Success);
+        Assert.DoesNotContain("DisableFirewall", operations.Calls);
+        Assert.DoesNotContain("DisableHosts", operations.Calls);
+        Assert.True(operations.Firewall.IsComplete);
+        Assert.Contains(report.Lines, line =>
+            line.Level == "ERR" &&
+            line.Text.Contains("task", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Disable_ShouldKeepNetworkProtectionWhenTaskIdentityChangesBeforeVerification()
+    {
+        var operations = CreateTamedOperations();
+        operations.Tasks[0] = operations.Tasks[0] with { Actions = [@"C:\HP\v1\task.exe"] };
+        operations.TaskQuerySteps.Enqueue(platform =>
+        {
+            platform.Tasks[0] = platform.Tasks[0] with { Actions = [@"C:\HP\v2\task.exe"] };
+        });
+        var stateStore = new InMemoryStateStore
+        {
+            State = new UnlockerState
+            {
+                Tasks =
+                [
+                    new TaskBackup(
+                        @"\OmenTask",
+                        false,
+                        false,
+                        ScheduledTaskRuntimeState.Ready,
+                        [@"C:\HP\v1\task.exe"])
+                ]
+            }
+        };
+        var engine = new UnlockerEngine(operations, stateStore, new RecordingDelay());
+
+        var report = engine.Disable(UnlockerOptions.ForDisable());
+
+        Assert.False(report.Success);
+        Assert.DoesNotContain("DisableFirewall", operations.Calls);
+        Assert.True(operations.Firewall.IsComplete);
+    }
+
+    [Fact]
+    public void DeepDryRun_ShouldReportAnInterruptedJournalWithoutRecoveringIt()
+    {
+        var operations = new FakeUnlockerOperations();
+        var now = DateTimeOffset.UtcNow;
+        var pending = new OperationJournalEntry(
+            Guid.NewGuid(),
+            UnlockerOperationKind.ResetAndReapply,
+            UnlockerOperationPhase.ResettingPackage,
+            true,
+            true,
+            "S-1-5-21-TEST",
+            now,
+            now);
+        var journal = new RecordingOperationJournalStore { Entry = pending };
+        var engine = new UnlockerEngine(
+            operations,
+            new InMemoryStateStore(),
+            new RecordingDelay(),
+            new RecordingOperationLock(),
+            journal);
+
+        var report = engine.RunDryRunDeep();
+
+        Assert.True(report.Success);
+        Assert.Contains(report.Lines, line => line.Level == "WARN");
+        Assert.Equal(pending.OperationId, journal.Entry?.OperationId);
+        Assert.DoesNotContain("ActivateFirewall", operations.Calls);
+        Assert.DoesNotContain("ActivateHosts", operations.Calls);
     }
 
     private static (
@@ -412,5 +1039,12 @@ public sealed class UnlockerEngineTests
         Assert.True(firstIndex >= 0, $"Call '{first}' was not recorded.");
         Assert.True(secondIndex >= 0, $"Call '{second}' was not recorded.");
         Assert.True(firstIndex < secondIndex, $"Expected '{first}' before '{second}'.");
+    }
+
+    private static void ReplaceExecutables(FakeUnlockerOperations operations, int count)
+    {
+        operations.Executables.Clear();
+        operations.Executables.AddRange(Enumerable.Range(1, count).Select(index =>
+            $@"C:\Program Files\WindowsApps\Omen\v2\Component{index:D2}.exe"));
     }
 }

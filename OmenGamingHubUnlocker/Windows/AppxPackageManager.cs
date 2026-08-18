@@ -75,16 +75,7 @@ Get-AppxPackage |
         try
         {
             var packages = QueryPackages(filters);
-            package = packages.FirstOrDefault();
-
-            if (package is null)
-            {
-                details = Text.Get("manager.appx.packageNotFound");
-                return false;
-            }
-
-            details = $"{package.Name} ({package.PackageFullName})";
-            return true;
+            return TrySelectPrimaryPackage(packages, out package, out details);
         }
         catch (Exception exception)
         {
@@ -92,6 +83,38 @@ Get-AppxPackage |
             details = exception.Message;
             return false;
         }
+    }
+
+    internal static bool TrySelectPrimaryPackage(
+        IReadOnlyCollection<AppxPackageInfo> packages,
+        out AppxPackageInfo? package,
+        out string details)
+    {
+        var exactMatches = packages
+            .Where(IsPrimaryPackage)
+            .OrderBy(candidate => candidate.PackageFullName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (exactMatches.Count == 1)
+        {
+            package = exactMatches[0];
+            details = $"{package.Name} ({package.PackageFullName})";
+            return true;
+        }
+
+        package = null;
+        if (exactMatches.Count > 1)
+        {
+            details = Text.Format("manager.appx.multiplePrimaryPackages", exactMatches.Count);
+            return false;
+        }
+
+        details = packages.Count == 0
+            ? Text.Get("manager.appx.packageNotFound")
+            : Text.Format(
+                "manager.appx.primaryPackageAmbiguous",
+                string.Join(", ", packages.Select(candidate => candidate.Name).Distinct(StringComparer.OrdinalIgnoreCase)));
+        return false;
     }
 
     /// <summary>
@@ -126,7 +149,7 @@ Reset-AppxPackage -Package '{escapedPackageName}' -Confirm:$false | Out-Null
 Write-Output 'Reset completed.'
 """;
 
-        var commandSucceeded = TryRunPowerShell(script, out var standardOutput, out var standardError, 120_000);
+        var commandSucceeded = TryRunPowerShell(script, out var standardOutput, out var standardError, 300_000);
         lines.Add(commandSucceeded
             ? LocalizedLine.Ok("manager.appx.resetCompleted", package.Name)
             : LocalizedLine.Err("manager.appx.resetFailed", package.Name, FirstNonEmpty(standardError, standardOutput, Text.Get("manager.appx.unknownError"))));
@@ -135,15 +158,11 @@ Write-Output 'Reset completed.'
     }
 
     private static bool TryRunPowerShell(string script, out string standardOutput, out string standardError, int timeoutMs)
-    {
-        var encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
-        return PowerShellRunner.TryRun(
-            "powershell.exe",
-            $"-NoProfile -ExecutionPolicy Bypass -EncodedCommand {encodedScript}",
+        => PowerShellRunner.TryRunScript(
+            script,
             out standardOutput,
             out standardError,
             timeoutMs);
-    }
 
     private static List<AppxPackageInfo> DeserializePackages(string json)
     {
@@ -179,9 +198,9 @@ Write-Output 'Reset completed.'
     private static bool MatchesAnyFilter(AppxPackageInfo package, string[] filters)
     {
         return filters.Any(filter =>
-            WildcardMatch(package.Name, filter) ||
-            WildcardMatch(package.PackageFamilyName, filter) ||
-            WildcardMatch(package.PackageFullName, filter));
+            WildcardMatcher.IsMatch(package.Name, filter) ||
+            WildcardMatcher.IsMatch(package.PackageFamilyName, filter) ||
+            WildcardMatcher.IsMatch(package.PackageFullName, filter));
     }
 
     private static bool IsPrimaryPackage(AppxPackageInfo package)
@@ -193,15 +212,4 @@ Write-Output 'Reset completed.'
     private static string FirstNonEmpty(params string[] values)
         => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
 
-    private static bool WildcardMatch(string input, string pattern)
-    {
-        var regex = "^" + System.Text.RegularExpressions.Regex.Escape(pattern)
-            .Replace("\\*", ".*")
-            .Replace("\\?", ".") + "$";
-
-        return System.Text.RegularExpressions.Regex.IsMatch(
-            input ?? string.Empty,
-            regex,
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-    }
 }

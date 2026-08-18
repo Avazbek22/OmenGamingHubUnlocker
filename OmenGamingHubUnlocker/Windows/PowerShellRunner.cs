@@ -5,23 +5,19 @@ namespace OmenGamingHubUnlocker.Windows;
 /// </summary>
 public static class PowerShellRunner
 {
+    private const int PostTerminationWaitMilliseconds = 5_000;
+
     public static (bool ok, string details) CheckAvailability()
     {
-        var systemPowerShellPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.System),
-            "WindowsPowerShell\\v1.0\\powershell.exe");
-
-        if (File.Exists(systemPowerShellPath))
+        if (File.Exists(WindowsPaths.WindowsPowerShell))
             return (true, Text.Get("manager.powershell.found"));
 
-        return (
-            TryRun("powershell", "-NoProfile -Command \"$PSVersionTable.PSVersion.ToString()\"", out var output, out var error, 15_000),
-            string.IsNullOrWhiteSpace(error) ? output.Trim() : error.Trim());
+        return (false, Text.Get("manager.powershell.notFound"));
     }
 
     public static (bool ok, string details) CheckNetshAvailability()
     {
-        var netshPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "netsh.exe");
+        var netshPath = WindowsPaths.GetSystemExecutable("netsh.exe");
         return File.Exists(netshPath)
             ? (true, Text.Get("manager.powershell.netshFound"))
             : (false, Text.Get("manager.powershell.netshNotFound"));
@@ -32,37 +28,40 @@ public static class PowerShellRunner
     /// </summary>
     public static bool TryRun(string fileName, string arguments, out string standardOutput, out string standardError, int timeoutMs = 30_000)
     {
+        var processStartInfo = CreateStartInfo(fileName);
+        processStartInfo.Arguments = arguments;
+        return TryRun(processStartInfo, out standardOutput, out standardError, timeoutMs);
+    }
+
+    /// <summary>
+    /// Executes a child process with an argument list so system-owned names cannot alter command parsing.
+    /// </summary>
+    public static bool TryRun(
+        string fileName,
+        IEnumerable<string> arguments,
+        out string standardOutput,
+        out string standardError,
+        int timeoutMs = 30_000)
+    {
+        var processStartInfo = CreateStartInfo(fileName);
+        foreach (var argument in arguments)
+            processStartInfo.ArgumentList.Add(argument);
+
+        return TryRun(processStartInfo, out standardOutput, out standardError, timeoutMs);
+    }
+
+    private static bool TryRun(
+        ProcessStartInfo processStartInfo,
+        out string standardOutput,
+        out string standardError,
+        int timeoutMs)
+    {
         try
         {
-            var processStartInfo = new ProcessStartInfo
-            {
-                FileName = fileName,
-                Arguments = arguments,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-
             using var process = new Process
             {
                 StartInfo = processStartInfo,
                 EnableRaisingEvents = true
-            };
-
-            var outputBuilder = new StringBuilder();
-            var errorBuilder = new StringBuilder();
-
-            process.OutputDataReceived += (_, eventArgs) =>
-            {
-                if (eventArgs.Data is not null)
-                    outputBuilder.AppendLine(eventArgs.Data);
-            };
-
-            process.ErrorDataReceived += (_, eventArgs) =>
-            {
-                if (eventArgs.Data is not null)
-                    errorBuilder.AppendLine(eventArgs.Data);
             };
 
             if (!process.Start())
@@ -72,23 +71,28 @@ public static class PowerShellRunner
                 return false;
             }
 
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
 
             if (!process.WaitForExit(timeoutMs))
             {
                 TryKillProcess(process);
-                process.WaitForExit();
+                process.WaitForExit(PostTerminationWaitMilliseconds);
 
-                standardOutput = outputBuilder.ToString().TrimEnd();
+                standardOutput = ReadCompletedOutput(outputTask);
                 standardError = Text.Format("manager.powershell.timeout", timeoutMs);
                 return false;
             }
 
-            process.WaitForExit();
+            if (!Task.WaitAll([outputTask, errorTask], PostTerminationWaitMilliseconds))
+            {
+                standardOutput = ReadCompletedOutput(outputTask);
+                standardError = Text.Get("manager.powershell.outputDrainTimeout");
+                return false;
+            }
 
-            standardOutput = outputBuilder.ToString().TrimEnd();
-            standardError = errorBuilder.ToString().TrimEnd();
+            standardOutput = outputTask.GetAwaiter().GetResult().TrimEnd();
+            standardError = errorTask.GetAwaiter().GetResult().TrimEnd();
             return process.ExitCode == 0;
         }
         catch (Exception exception)
@@ -110,12 +114,22 @@ public static class PowerShellRunner
     {
         var encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
         return TryRun(
-            "powershell.exe",
-            $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encodedScript}",
+            WindowsPaths.WindowsPowerShell,
+            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodedScript],
             out standardOutput,
             out standardError,
             timeoutMs);
     }
+
+    private static ProcessStartInfo CreateStartInfo(string fileName)
+        => new()
+        {
+            FileName = fileName,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
 
     private static void TryKillProcess(Process process)
     {
@@ -129,4 +143,9 @@ public static class PowerShellRunner
             // The best-effort timeout path should never hide the original timeout reason.
         }
     }
+
+    private static string ReadCompletedOutput(Task<string> outputTask)
+        => outputTask.IsCompletedSuccessfully
+            ? outputTask.GetAwaiter().GetResult().TrimEnd()
+            : string.Empty;
 }

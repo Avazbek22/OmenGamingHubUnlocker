@@ -3,7 +3,11 @@ namespace OmenGamingHubUnlocker.Windows;
 /// <summary>
 /// Immutable process metadata used after native process handles have been released.
 /// </summary>
-public sealed record ProcessItem(int Id, string Name, string ExecutablePath)
+public sealed record ProcessItem(
+    int Id,
+    string Name,
+    string ExecutablePath,
+    DateTime? StartTimeUtc = null)
 {
     public string Label => $"{Name} (PID {Id})";
 }
@@ -15,8 +19,10 @@ public static class ProcessManager
 {
     public static List<ProcessItem> QueryTargetProcesses(
         IEnumerable<string> namePatterns,
-        IEnumerable<string> trustedExecutablePaths)
+        IEnumerable<string> trustedExecutablePaths,
+        bool requireTrustedOmenIdentity = false)
     {
+        var patterns = namePatterns.ToArray();
         var normalizedPaths = trustedExecutablePaths
             .Select(TryNormalizePath)
             .Where(path => path is not null)
@@ -36,11 +42,22 @@ public static class ProcessManager
 
                     var executablePath = TryGetExecutablePath(process);
                     var normalizedExecutablePath = TryNormalizePath(executablePath);
-                    var matchesKnownName = namePatterns.Any(pattern => WildcardMatcher.IsMatch(process.ProcessName, pattern));
+                    var matchesKnownName = patterns.Any(pattern => WildcardMatcher.IsMatch(process.ProcessName, pattern));
                     var matchesDiscoveredPath = normalizedExecutablePath is not null && normalizedPaths.Contains(normalizedExecutablePath);
+                    var trustedNameMatch = matchesKnownName &&
+                                           (!requireTrustedOmenIdentity ||
+                                            OmenExecutableTrust.IsTrustedOmenExecutable(
+                                                executablePath,
+                                                process.ProcessName));
 
-                    if (matchesKnownName || matchesDiscoveredPath)
-                        targetProcesses.Add(new ProcessItem(process.Id, process.ProcessName, executablePath));
+                    if (trustedNameMatch || matchesDiscoveredPath)
+                    {
+                        targetProcesses.Add(new ProcessItem(
+                            process.Id,
+                            process.ProcessName,
+                            executablePath,
+                            TryGetStartTimeUtc(process)));
+                    }
                 }
                 catch
                 {
@@ -59,10 +76,14 @@ public static class ProcessManager
     public static List<OperationLine> TerminateTargetProcesses(
         IEnumerable<string> namePatterns,
         IEnumerable<string> trustedExecutablePaths,
-        bool dryRun)
+        bool dryRun,
+        bool requireTrustedOmenIdentity = false)
     {
         var lines = new List<OperationLine>();
-        var targetProcesses = QueryTargetProcesses(namePatterns, trustedExecutablePaths);
+        var targetProcesses = QueryTargetProcesses(
+            namePatterns,
+            trustedExecutablePaths,
+            requireTrustedOmenIdentity);
 
         if (targetProcesses.Count == 0)
         {
@@ -81,6 +102,12 @@ public static class ProcessManager
             try
             {
                 using var process = Process.GetProcessById(target.Id);
+                if (!MatchesSnapshot(process, target))
+                {
+                    lines.Add(LocalizedLine.Warn("manager.processes.identityChanged", target.Label));
+                    continue;
+                }
+
                 process.Kill(entireProcessTree: true);
 
                 if (!process.WaitForExit(10_000))
@@ -114,6 +141,42 @@ public static class ProcessManager
         catch
         {
             return string.Empty;
+        }
+    }
+
+    private static DateTime? TryGetStartTimeUtc(Process process)
+    {
+        try
+        {
+            return process.StartTime.ToUniversalTime();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool MatchesSnapshot(Process process, ProcessItem target)
+    {
+        try
+        {
+            if (!process.ProcessName.Equals(target.Name, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var currentStartTime = TryGetStartTimeUtc(process);
+            if (target.StartTimeUtc.HasValue && currentStartTime != target.StartTimeUtc)
+                return false;
+
+            var expectedPath = TryNormalizePath(target.ExecutablePath);
+            return expectedPath is null ||
+                   string.Equals(
+                       TryNormalizePath(TryGetExecutablePath(process)),
+                       expectedPath,
+                       StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
         }
     }
 

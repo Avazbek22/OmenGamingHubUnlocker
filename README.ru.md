@@ -171,9 +171,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Publish-Release.ps
 
 У версионных параметров разные роли, и перед каждым релизом они проверяются на согласованность:
 
-- `InformationalVersion` — публичная версия для GitHub, используется в тегах и именах файлов, например `3.2`
-- `Version` — версия сборки .NET, например `3.2.0`
-- `FileVersion` и `AssemblyVersion` — четырёхчастная версия для Windows и WinGet, например `3.2.0.0`
+- `InformationalVersion` — публичная версия для GitHub, используется в тегах и именах файлов, например `3.3`
+- `Version` — версия сборки .NET, например `3.3.0`
+- `FileVersion` и `AssemblyVersion` — четырёхчастная версия для Windows и WinGet, например `3.3.0.0`
 
 Если эти значения не совпадают между собой, скрипт останавливается.
 

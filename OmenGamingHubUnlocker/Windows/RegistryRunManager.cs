@@ -42,7 +42,14 @@ public static class RegistryRunManager
     }
 
     public static List<OperationLine> RemoveEntries(IEnumerable<RunEntry> entries, bool dryRun)
+        => RemoveEntriesAtSubKey(entries, dryRun, RunEntry.RunSubKey);
+
+    internal static List<OperationLine> RemoveEntriesAtSubKey(
+        IEnumerable<RunEntry> entries,
+        bool dryRun,
+        string runSubKey)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(runSubKey);
         var targetEntries = entries
             .DistinctBy(BuildIdentityKey, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -62,17 +69,16 @@ public static class RegistryRunManager
             try
             {
                 using var baseKey = RegistryKey.OpenBaseKey(entryGroup.Key.Hive, entryGroup.Key.View);
-                using var runKey = baseKey.OpenSubKey(RunEntry.RunSubKey, writable: true);
+                using var runKey = baseKey.OpenSubKey(runSubKey, writable: !dryRun);
 
                 if (runKey is null)
                 {
                     foreach (var entry in entryGroup)
                     {
-                        operationLines.Add(new OperationLine
-                        {
-                            Level = "WARN",
-                            Text = Text.Format("manager.registry.keyNotFound", entry.Location, entry.Name)
-                        });
+                        operationLines.Add(LocalizedLine.Info(
+                            "manager.registry.alreadyAbsent",
+                            entry.Location,
+                            entry.Name));
                     }
 
                     continue;
@@ -80,6 +86,33 @@ public static class RegistryRunManager
 
                 foreach (var entry in entryGroup)
                 {
+                    var valueExists = runKey.GetValueNames()
+                        .Contains(entry.Name, StringComparer.OrdinalIgnoreCase);
+                    if (!valueExists)
+                    {
+                        operationLines.Add(LocalizedLine.Info(
+                            "manager.registry.alreadyAbsent",
+                            entry.Location,
+                            entry.Name));
+                        continue;
+                    }
+
+                    var currentValue = runKey.GetValue(
+                            entry.Name,
+                            defaultValue: string.Empty,
+                            RegistryValueOptions.DoNotExpandEnvironmentNames)
+                        ?.ToString() ?? string.Empty;
+                    var currentKind = runKey.GetValueKind(entry.Name);
+                    if (!currentValue.Equals(entry.Value, StringComparison.Ordinal) ||
+                        currentKind != entry.ValueKind)
+                    {
+                        operationLines.Add(LocalizedLine.Err(
+                            "manager.registry.removeConflict",
+                            entry.Location,
+                            entry.Name));
+                        continue;
+                    }
+
                     if (dryRun)
                     {
                         operationLines.Add(new OperationLine
@@ -102,7 +135,7 @@ public static class RegistryRunManager
             {
                 operationLines.Add(new OperationLine
                 {
-                    Level = "WARN",
+                    Level = "ERR",
                     Text = Text.Format("manager.registry.failedIn", FormatLocation(entryGroup.Key.Hive, entryGroup.Key.View), exception.Message)
                 });
             }
@@ -112,7 +145,14 @@ public static class RegistryRunManager
     }
 
     public static List<OperationLine> RestoreEntries(IEnumerable<RunEntryBackup> entries, bool dryRun)
+        => RestoreEntriesAtSubKey(entries, dryRun, RunEntry.RunSubKey);
+
+    internal static List<OperationLine> RestoreEntriesAtSubKey(
+        IEnumerable<RunEntryBackup> entries,
+        bool dryRun,
+        string runSubKey)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(runSubKey);
         var targetEntries = entries
             .DistinctBy(BuildIdentityKey, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -132,17 +172,27 @@ public static class RegistryRunManager
             try
             {
                 using var baseKey = RegistryKey.OpenBaseKey(entryGroup.Key.Hive, entryGroup.Key.View);
-                using var runKey = baseKey.CreateSubKey(RunEntry.RunSubKey, writable: true);
+                using var runKey = dryRun
+                    ? baseKey.OpenSubKey(runSubKey, writable: false)
+                    : baseKey.CreateSubKey(runSubKey, writable: true);
 
                 if (runKey is null)
                 {
                     foreach (var entry in entryGroup)
                     {
-                        operationLines.Add(new OperationLine
-                        {
-                            Level = "ERR",
-                            Text = Text.Format("manager.registry.failedToOpenForRestore", FormatLocation(entry.Hive, entry.View))
-                        });
+                        operationLines.Add(dryRun
+                            ? LocalizedLine.Ok(
+                                "manager.registry.wouldRestore",
+                                FormatLocation(entry.Hive, entry.View),
+                                runSubKey,
+                                entry.Name)
+                            : new OperationLine
+                            {
+                                Level = "ERR",
+                                Text = Text.Format(
+                                    "manager.registry.failedToOpenForRestore",
+                                    FormatLocation(entry.Hive, entry.View))
+                            });
                     }
 
                     continue;
@@ -150,12 +200,41 @@ public static class RegistryRunManager
 
                 foreach (var entry in entryGroup)
                 {
+                    var valueExists = runKey.GetValueNames().Contains(entry.Name, StringComparer.OrdinalIgnoreCase);
+                    if (valueExists)
+                    {
+                        var currentValue = runKey.GetValue(
+                                entry.Name,
+                                defaultValue: string.Empty,
+                                RegistryValueOptions.DoNotExpandEnvironmentNames)
+                            ?.ToString() ?? string.Empty;
+                        var currentKind = runKey.GetValueKind(entry.Name);
+
+                        if (currentValue.Equals(entry.Value, StringComparison.Ordinal) &&
+                            currentKind == entry.ValueKind)
+                        {
+                            operationLines.Add(LocalizedLine.Info(
+                                "manager.registry.alreadyRestored",
+                                FormatLocation(entry.Hive, entry.View),
+                                entry.Name));
+                        }
+                        else
+                        {
+                            operationLines.Add(LocalizedLine.Err(
+                                "manager.registry.restoreConflict",
+                                FormatLocation(entry.Hive, entry.View),
+                                entry.Name));
+                        }
+
+                        continue;
+                    }
+
                     if (dryRun)
                     {
                         operationLines.Add(new OperationLine
                         {
                             Level = "OK",
-                            Text = Text.Format("manager.registry.wouldRestore", FormatLocation(entry.Hive, entry.View), RunEntry.RunSubKey, entry.Name)
+                            Text = Text.Format("manager.registry.wouldRestore", FormatLocation(entry.Hive, entry.View), runSubKey, entry.Name)
                         });
                         continue;
                     }
@@ -164,7 +243,7 @@ public static class RegistryRunManager
                     operationLines.Add(new OperationLine
                     {
                         Level = "OK",
-                        Text = Text.Format("manager.registry.restored", FormatLocation(entry.Hive, entry.View), RunEntry.RunSubKey, entry.Name)
+                        Text = Text.Format("manager.registry.restored", FormatLocation(entry.Hive, entry.View), runSubKey, entry.Name)
                     });
                 }
             }
@@ -205,7 +284,9 @@ public static class RegistryRunManager
                         defaultValue: string.Empty,
                         RegistryValueOptions.DoNotExpandEnvironmentNames)
                     ?.ToString() ?? string.Empty;
-                if (!matchEverything && !MatchesAnyPattern(valueName, valueData, patterns))
+                if (!matchEverything &&
+                    (!MatchesAnyPattern(valueName, valueData, patterns) ||
+                     !OmenIdentity.IsLikelyOmenReference(valueName, valueData)))
                     continue;
 
                 if (valueKind is not RegistryValueKind.String and not RegistryValueKind.ExpandString)

@@ -12,7 +12,7 @@ public sealed class AppInfo
     private const string Windows11Label = "Windows 11";
 
     public const string AppName = "OmenGamingHubUnlocker";
-    public const string AppDisplayVersion = "3.2";
+    public const string AppDisplayVersion = "3.3";
     public const string AppVersionTag = "v" + AppDisplayVersion;
     public const string AppDisplayName = AppName + " " + AppVersionTag;
     public const string SupportUrl = "https://boosty.to/avazbek22";
@@ -193,6 +193,7 @@ public sealed class AppInfo
         => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
 
     [DllImport("ntdll.dll", ExactSpelling = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern int RtlGetVersion(ref RtlOsVersionInfoExw versionInformation);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -219,5 +220,6 @@ public sealed class AppInfo
     private static extern IntPtr BrandingFormatString(string format);
 
     [DllImport("kernel32.dll", ExactSpelling = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern IntPtr GlobalFree(IntPtr memoryHandle);
 }

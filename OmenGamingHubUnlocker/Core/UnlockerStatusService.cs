@@ -156,10 +156,14 @@ public sealed class UnlockerStatusService(IUnlockerOperations operations)
                         status.RuleCount,
                         status.MissingExecutableRules.Count,
                         status.StaleExecutableRules.Count,
-                        status.PackageRulePresent ? Text.Get("state.true") : Text.Get("state.false"))
+                        status.PackageRulePresent ? Text.Get("state.true") : Text.Get("state.false"),
+                        status.Targets.DiscoveryComplete
+                            ? Text.Get("state.complete")
+                            : Text.Get("state.incomplete"),
+                        status.EnforcementActive ? Text.Get("state.true") : Text.Get("state.false"))
                     : status.Error,
                 Expected = "Current package and executable paths blocked",
-                Result = !status.QuerySucceeded ? "ERR" : status.IsComplete ? "OK" : "WARN"
+                Result = !status.QuerySucceeded ? "ERR" : status.IsReconciled ? "OK" : "WARN"
             });
         }
         catch (Exception exception)
@@ -209,6 +213,7 @@ public sealed class UnlockerStatusService(IUnlockerOperations operations)
             {
                 var exists = services.TryGetValue(backup.Name, out var service);
                 var restored = exists &&
+                               TargetIdentityMatcher.ServiceMatches(service!, backup.PathName) &&
                                ServiceStatePolicy.MatchesBackup(service!, backup) &&
                                ServiceStatePolicy.MatchesOriginalRunningState(service!, backup);
                 snapshots.Add(new StatusSnapshot
@@ -240,15 +245,20 @@ public sealed class UnlockerStatusService(IUnlockerOperations operations)
             foreach (var backup in backups)
             {
                 var exists = tasks.TryGetValue(backup.Path, out var task);
+                var restored = exists &&
+                               TargetIdentityMatcher.TaskMatches(task!, backup.Actions) &&
+                               task!.Enabled == backup.OriginalEnabled &&
+                               TaskStatePolicy.MatchesOriginalRuntimeState(task, backup);
                 snapshots.Add(new StatusSnapshot
                 {
                     Area = "Tasks",
                     Item = backup.Path,
                     Current = exists
-                        ? task!.Enabled ? "Enabled" : "Disabled"
+                        ? $"{(task!.Enabled ? "Enabled" : "Disabled")}, {task.State}"
                         : Text.Get("state.notInstalled"),
-                    Expected = backup.OriginalEnabled ? "Enabled" : "Disabled",
-                    Result = !exists ? "INFO" : task!.Enabled == backup.OriginalEnabled ? "OK" : "ERR"
+                    Expected = $"{(backup.OriginalEnabled ? "Enabled" : "Disabled")}, " +
+                               TaskStatePolicy.FormatExpectedRuntimeState(backup),
+                    Result = !exists ? "INFO" : restored ? "OK" : "ERR"
                 });
             }
         }

@@ -15,11 +15,19 @@ public sealed record FirewallTargetSet(
     string PackageSid,
     string PackageSidError,
     IReadOnlySet<string> PackageExecutables,
-    IReadOnlySet<string> ExternalExecutables)
+    IReadOnlySet<string> ExternalExecutables,
+    bool PackageDirectoryReady = true,
+    IReadOnlyList<string>? DiscoveryErrors = null)
 {
-    public IReadOnlySet<string> AllExecutables { get; } = PackageExecutables
+    public IReadOnlySet<string> AllExecutables => PackageExecutables
         .Concat(ExternalExecutables)
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    public IReadOnlyList<string> ScanErrors => DiscoveryErrors ?? [];
+
+    public bool DiscoveryComplete =>
+        (Package is null || PackageDirectoryReady) &&
+        ScanErrors.Count == 0;
 }
 
 /// <summary>
@@ -32,7 +40,9 @@ public sealed record FirewallProtectionStatus(
     IReadOnlyList<string> MissingExecutableRules,
     IReadOnlyList<string> StaleExecutableRules,
     bool PackageRulePresent,
-    string Error)
+    string Error,
+    bool EnforcementActive = true,
+    string EnforcementDetails = "")
 {
     public int RuleCount => Rules.Count;
     public bool PackageRuleRequired => !string.IsNullOrWhiteSpace(Targets.PackageSid);
@@ -40,9 +50,13 @@ public sealed record FirewallProtectionStatus(
 
     public bool IsComplete =>
         QuerySucceeded &&
+        EnforcementActive &&
+        Targets.DiscoveryComplete &&
         HasProtectionIdentity &&
         MissingExecutableRules.Count == 0 &&
         (!PackageRuleRequired || PackageRulePresent);
+
+    public bool IsReconciled => IsComplete && StaleExecutableRules.Count == 0;
 }
 
 /// <summary>
@@ -55,32 +69,68 @@ public static class FirewallManager
     public static (bool ok, string details) CheckCapability()
     {
         var query = QueryManagedRules(OmenTargets.FirewallRulePrefix);
-        return query.Success
+        if (!query.Success)
+            return (false, query.Error);
+
+        var enforcement = InspectEnforcement();
+        return enforcement.InspectionSucceeded && enforcement.Active
             ? (true, Text.Get("manager.firewall.capabilityOk"))
-            : (false, query.Error);
+            : (false, enforcement.Details);
     }
 
     public static int CountRulesByPrefix(string prefix)
         => QueryManagedRules(prefix).Rules.Count;
 
-    public static HashSet<string> DiscoverCandidateExecutables()
-        => DiscoverTargets().AllExecutables.ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-    public static FirewallTargetSet DiscoverTargets()
+    public static FirewallTargetSet DiscoverTargets(
+        IEnumerable<string>? additionalExecutablePaths = null,
+        IEnumerable<string>? upstreamDiscoveryErrors = null)
     {
         var packageExecutables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var externalExecutables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var package = AppxPackageManager.QueryPackages(OmenTargets.AppxFilters).FirstOrDefault();
+        var discoveryErrors = upstreamDiscoveryErrors?.ToList() ?? [];
+        var packageCandidates = AppxPackageManager.QueryPackages(OmenTargets.AppxFilters);
+        AppxPackageManager.TrySelectPrimaryPackage(packageCandidates, out var package, out var packageDetails);
+        if (package is null && packageCandidates.Count > 0)
+            discoveryErrors.Add(packageDetails);
+
+        var packageDirectoryReady = true;
 
         if (package is not null)
-            TryScanExecutables(package.InstallLocation, packageExecutables);
+        {
+            packageDirectoryReady = ScanExecutables(
+                package.InstallLocation,
+                packageExecutables,
+                discoveryErrors,
+                requireDirectory: true);
+        }
 
         foreach (var relativeDirectory in OmenTargets.ExtraExeDirsRelative)
         {
-            TryScanExecutables(Path.Combine(WindowsPaths.ProgramFiles, relativeDirectory), externalExecutables);
+            ScanExecutables(
+                Path.Combine(WindowsPaths.ProgramFiles, relativeDirectory),
+                externalExecutables,
+                discoveryErrors,
+                requireDirectory: false);
 
             if (!string.Equals(WindowsPaths.ProgramFiles, WindowsPaths.ProgramFilesX86, StringComparison.OrdinalIgnoreCase))
-                TryScanExecutables(Path.Combine(WindowsPaths.ProgramFilesX86, relativeDirectory), externalExecutables);
+            {
+                ScanExecutables(
+                    Path.Combine(WindowsPaths.ProgramFilesX86, relativeDirectory),
+                    externalExecutables,
+                    discoveryErrors,
+                    requireDirectory: false);
+            }
+        }
+
+        foreach (var executablePath in additionalExecutablePaths ?? [])
+        {
+            var normalizedPath = NormalizePath(executablePath);
+            if (normalizedPath is not null &&
+                normalizedPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
+                File.Exists(normalizedPath))
+            {
+                externalExecutables.Add(normalizedPath);
+            }
         }
 
         var packageSid = string.Empty;
@@ -93,15 +143,20 @@ public static class FirewallManager
             packageSid,
             packageSidError,
             packageExecutables,
-            externalExecutables);
+            externalExecutables,
+            packageDirectoryReady,
+            discoveryErrors);
     }
 
-    public static FirewallProtectionStatus InspectProtection(string prefix)
+    public static FirewallProtectionStatus InspectProtection(
+        string prefix,
+        FirewallTargetSet? discoveredTargets = null)
     {
-        var targets = DiscoverTargets();
+        var targets = discoveredTargets ?? DiscoverTargets();
         var query = QueryManagedRules(prefix);
+        var enforcement = InspectEnforcement();
 
-        if (!query.Success)
+        if (!query.Success || !enforcement.InspectionSucceeded)
         {
             return new FirewallProtectionStatus(
                 false,
@@ -110,7 +165,9 @@ public static class FirewallManager
                 targets.AllExecutables.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToList(),
                 [],
                 false,
-                query.Error);
+                query.Success ? enforcement.Details : query.Error,
+                enforcement.Active,
+                enforcement.Details);
         }
 
         var activeRules = query.Rules
@@ -143,13 +200,19 @@ public static class FirewallManager
             missingPrograms,
             stalePrograms,
             packageRulePresent,
-            string.Empty);
+            enforcement.Active ? string.Empty : enforcement.Details,
+            enforcement.Active,
+            enforcement.Details);
     }
 
-    public static List<OperationLine> ActivateFirewallBlock(string prefix, bool dryRun)
+    public static List<OperationLine> ActivateFirewallBlock(
+        string prefix,
+        bool dryRun,
+        bool removeStaleRules = false,
+        FirewallTargetSet? discoveredTargets = null)
     {
         var lines = new List<OperationLine>();
-        var targets = DiscoverTargets();
+        var targets = discoveredTargets ?? DiscoverTargets();
 
         if (!targets.HasAnyTarget())
         {
@@ -170,23 +233,34 @@ public static class FirewallManager
                 targets.PackageSidError));
         }
 
-        // Keep the stable package rule active while obsolete executable rules are replaced.
-        lines.AddRange(RemoveRulesByPrefix(
-            prefix,
-            dryRun,
-            new HashSet<string>([packageRuleName], StringComparer.OrdinalIgnoreCase)));
+        var query = QueryManagedRules(prefix);
+        if (!query.Success)
+        {
+            lines.Add(LocalizedLine.Err("manager.firewall.verificationFailed", query.Error));
+            return lines;
+        }
+
+        var desiredRuleNames = new HashSet<string>([packageRuleName], StringComparer.OrdinalIgnoreCase);
 
         foreach (var executablePath in targets.AllExecutables.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
         {
             var ruleName = BuildProgramRuleName(prefix, executablePath);
+            desiredRuleNames.Add(ruleName);
+
+            if (HasCurrentProgramRule(query.Rules, ruleName, executablePath))
+                continue;
+
             if (dryRun)
             {
                 lines.Add(LocalizedLine.Ok("manager.firewall.wouldBlockOutbound", executablePath));
                 continue;
             }
 
-            if (TryAddProgramRuleCom(ruleName, executablePath, out var comError) ||
-                TryAddProgramRulePowerShell(ruleName, executablePath, out var powerShellError))
+            if (query.Rules.Any(rule => rule.Name.Equals(ruleName, StringComparison.OrdinalIgnoreCase)))
+                lines.AddRange(RemoveRulesByExactName(ruleName));
+
+            if (TryAddProgramRulePowerShell(ruleName, executablePath, out var powerShellError) ||
+                TryAddProgramRuleCom(ruleName, executablePath, out var comError))
             {
                 lines.Add(LocalizedLine.Ok("manager.firewall.createdBlockRule", ruleName));
                 continue;
@@ -199,8 +273,14 @@ public static class FirewallManager
                 powerShellError));
         }
 
+        // Existing rules remain active until target discovery is stable, preventing an update-time protection gap.
+        if (removeStaleRules && targets.DiscoveryComplete)
+            lines.AddRange(RemoveRulesByPrefix(prefix, dryRun, desiredRuleNames));
+        else if (removeStaleRules)
+            lines.Add(LocalizedLine.Info("manager.firewall.staleCleanupDeferred"));
+
         if (!dryRun)
-            AppendActivationVerification(lines, prefix);
+            AppendActivationVerification(lines, prefix, targets);
 
         return lines;
     }
@@ -230,6 +310,9 @@ public static class FirewallManager
         bool dryRun)
     {
         var query = QueryManagedRules(prefix);
+        if (!query.Success)
+            return [LocalizedLine.Err("manager.firewall.verificationFailed", query.Error)];
+
         var matchingRule = query.Rules.FirstOrDefault(rule =>
             rule.Name.Equals(ruleName, StringComparison.OrdinalIgnoreCase) &&
             rule.Enabled &&
@@ -244,8 +327,8 @@ public static class FirewallManager
             return [LocalizedLine.Ok("manager.firewall.wouldCreatePackageRule", ruleName)];
 
         var lines = RemoveRulesByExactName(ruleName);
-        if (TryAddPackageRuleCom(ruleName, packageSid, out var comError) ||
-            TryAddPackageRulePowerShell(ruleName, packageSid, out var powerShellError))
+        if (TryAddPackageRulePowerShell(ruleName, packageSid, out var powerShellError) ||
+            TryAddPackageRuleCom(ruleName, packageSid, out var comError))
         {
             lines.Add(LocalizedLine.Ok("manager.firewall.createdPackageRule", ruleName));
             return lines;
@@ -288,43 +371,55 @@ public static class FirewallManager
 
     private static List<OperationLine> RemoveRulesByExactName(string ruleName)
     {
-        try
-        {
-            var firewallPolicyType = Type.GetTypeFromProgID("HNetCfg.FwPolicy2")
-                                     ?? throw new InvalidOperationException(Text.Get("manager.firewall.capabilityNotAvailable"));
-            dynamic firewallPolicy = Activator.CreateInstance(firewallPolicyType)!;
-            dynamic firewallRules = firewallPolicy.Rules;
-            firewallRules.Remove(ruleName);
-            return [LocalizedLine.Ok("manager.firewall.removedRule", ruleName)];
-        }
-        catch (Exception comException)
-        {
-            var escapedName = EscapePowerShellLiteral(ruleName);
-            var script = $"""
+        var escapedName = EscapePowerShellLiteral(ruleName);
+        var netSecurityScript = $"""
 $ErrorActionPreference = 'Stop'
 Get-NetFirewallRule -DisplayName '{escapedName}' -ErrorAction SilentlyContinue |
     Remove-NetFirewallRule -ErrorAction Stop
 """;
 
-            var succeeded = PowerShellRunner.TryRunScript(script, out _, out var error, 30_000);
-            return succeeded
-                ? [LocalizedLine.Ok("manager.firewall.removedRule", ruleName)]
-                : [LocalizedLine.Err("manager.firewall.failedToRemoveRule", ruleName, $"{comException.Message}; {error}")];
-        }
+        if (PowerShellRunner.TryRunScript(netSecurityScript, out _, out var netSecurityError, 30_000))
+            return [LocalizedLine.Ok("manager.firewall.removedRule", ruleName)];
+
+        var comScript = $"""
+$ErrorActionPreference = 'Stop'
+$policy = New-Object -ComObject 'HNetCfg.FwPolicy2'
+$policy.Rules.Remove('{escapedName}')
+""";
+        var comSucceeded = PowerShellRunner.TryRunScript(comScript, out _, out var comError, 30_000);
+        return comSucceeded
+            ? [LocalizedLine.Ok("manager.firewall.removedRule", ruleName)]
+            : [LocalizedLine.Err(
+                "manager.firewall.failedToRemoveRule",
+                ruleName,
+                $"NetSecurity: {netSecurityError}; COM: {comError}")];
     }
 
-    private static void AppendActivationVerification(List<OperationLine> lines, string prefix)
+    private static void AppendActivationVerification(
+        List<OperationLine> lines,
+        string prefix,
+        FirewallTargetSet targets)
     {
-        var status = InspectProtection(prefix);
+        var status = InspectProtection(prefix, targets);
         if (!status.QuerySucceeded)
         {
             lines.Add(LocalizedLine.Err("manager.firewall.verificationFailed", status.Error));
             return;
         }
 
+        if (!status.Targets.DiscoveryComplete)
+        {
+            lines.Add(LocalizedLine.Info(
+                "manager.firewall.discoveryIncomplete",
+                status.Targets.ScanErrors.Count));
+        }
+
+        if (!status.EnforcementActive)
+            lines.Add(LocalizedLine.Err("manager.firewall.enforcementInactive", status.EnforcementDetails));
+
         if (status.MissingExecutableRules.Count > 0)
         {
-            lines.Add(LocalizedLine.Err(
+            lines.Add(LocalizedLine.Info(
                 "manager.firewall.missingProgramRules",
                 status.MissingExecutableRules.Count));
         }
@@ -334,6 +429,23 @@ Get-NetFirewallRule -DisplayName '{escapedName}' -ErrorAction SilentlyContinue |
 
         if (status.IsComplete)
             lines.Add(LocalizedLine.Ok("manager.firewall.verificationPassed", status.RuleCount));
+    }
+
+    private static bool HasCurrentProgramRule(
+        IEnumerable<FirewallRuleInfo> rules,
+        string ruleName,
+        string executablePath)
+    {
+        var normalizedExecutablePath = NormalizePath(executablePath);
+        return normalizedExecutablePath is not null && rules.Any(rule =>
+            rule.Name.Equals(ruleName, StringComparison.OrdinalIgnoreCase) &&
+            rule.Enabled &&
+            rule.IsOutbound &&
+            rule.IsBlock &&
+            string.Equals(
+                NormalizePath(rule.ProgramPath),
+                normalizedExecutablePath,
+                StringComparison.OrdinalIgnoreCase));
     }
 
     private static FirewallRuleQuery QueryManagedRules(string prefix)
@@ -404,30 +516,49 @@ ConvertTo-Json -InputObject $result -Compress
 
     private static FirewallRuleQuery QueryManagedRulesCom(string prefix)
     {
+        var escapedPrefix = EscapePowerShellLiteral(prefix + " - ");
+        var script = $$"""
+$ErrorActionPreference = 'Stop'
+$policy = New-Object -ComObject 'HNetCfg.FwPolicy2'
+$result = @(
+    foreach ($rule in $policy.Rules) {
+        $name = [string]$rule.Name
+        if (-not $name.StartsWith('{{escapedPrefix}}', [StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+
+        [PSCustomObject]@{
+            Name = $name
+            Enabled = [bool]$rule.Enabled
+            IsOutbound = [bool]([int]$rule.Direction -eq 2)
+            IsBlock = [bool]([int]$rule.Action -eq 0)
+            ProgramPath = [string]$rule.ApplicationName
+            PackageSid = [string]$rule.LocalAppPackageId
+        }
+    }
+)
+ConvertTo-Json -InputObject $result -Compress
+""";
+
+        if (!PowerShellRunner.TryRunScript(script, out var output, out var error, 30_000))
+            return FirewallRuleQuery.Failed(error);
+
         try
         {
-            var firewallPolicyType = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
-            if (firewallPolicyType is null)
-                return FirewallRuleQuery.Failed(Text.Get("manager.firewall.capabilityNotAvailable"));
-
-            dynamic firewallPolicy = Activator.CreateInstance(firewallPolicyType)!;
-            dynamic firewallRules = firewallPolicy.Rules;
-            var rules = new List<FirewallRuleInfo>();
-
-            foreach (dynamic firewallRule in (System.Collections.IEnumerable)firewallRules)
+            using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(output) ? "[]" : output);
+            var elements = document.RootElement.ValueKind switch
             {
-                string name = firewallRule.Name;
-                if (!name.StartsWith(prefix + " - ", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                rules.Add(new FirewallRuleInfo(
-                    name,
-                    ReadDynamic(() => (bool)firewallRule.Enabled, false),
-                    ReadDynamic(() => (int)firewallRule.Direction, 0) == 2,
-                    ReadDynamic(() => (int)firewallRule.Action, 1) == 0,
-                    ReadDynamic(() => (string)firewallRule.ApplicationName, string.Empty) ?? string.Empty,
-                    ReadDynamic(() => (string)firewallRule.LocalAppPackageId, string.Empty) ?? string.Empty));
-            }
+                JsonValueKind.Array => document.RootElement.EnumerateArray().ToList(),
+                JsonValueKind.Object => [document.RootElement],
+                _ => []
+            };
+            var rules = elements.Select(element => new FirewallRuleInfo(
+                ReadJsonString(element, "Name"),
+                ReadJsonBoolean(element, "Enabled"),
+                ReadJsonBoolean(element, "IsOutbound"),
+                ReadJsonBoolean(element, "IsBlock"),
+                ReadJsonString(element, "ProgramPath"),
+                ReadJsonString(element, "PackageSid"))).ToList();
 
             return FirewallRuleQuery.Succeeded(rules);
         }
@@ -447,58 +578,36 @@ ConvertTo-Json -InputObject $result -Compress
            property.ValueKind is JsonValueKind.True or JsonValueKind.False &&
            property.GetBoolean();
 
-    private static T ReadDynamic<T>(Func<T> reader, T fallback)
-    {
-        try
-        {
-            return reader();
-        }
-        catch
-        {
-            return fallback;
-        }
-    }
-
     private static bool TryAddProgramRuleCom(string ruleName, string executablePath, out string error)
-        => TryAddRuleCom(ruleName, rule => rule.ApplicationName = executablePath, out error);
+        => TryAddRuleCom(ruleName, "ApplicationName", executablePath, out error);
 
     private static bool TryAddPackageRuleCom(string ruleName, string packageSid, out string error)
-        => TryAddRuleCom(ruleName, rule => rule.LocalAppPackageId = packageSid, out error);
+        => TryAddRuleCom(ruleName, "LocalAppPackageId", packageSid, out error);
 
-    private static bool TryAddRuleCom(string ruleName, Action<dynamic> configureIdentity, out string error)
+    private static bool TryAddRuleCom(
+        string ruleName,
+        string identityProperty,
+        string identityValue,
+        out string error)
     {
-        try
-        {
-            var firewallRuleType = Type.GetTypeFromProgID("HNetCfg.FWRule");
-            var firewallPolicyType = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
-            if (firewallRuleType is null || firewallPolicyType is null)
-            {
-                error = Text.Get("manager.firewall.comTypesUnavailable");
-                return false;
-            }
+        var escapedRuleName = EscapePowerShellLiteral(ruleName);
+        var escapedIdentity = EscapePowerShellLiteral(identityValue);
+        var script = $$"""
+$ErrorActionPreference = 'Stop'
+$rule = New-Object -ComObject 'HNetCfg.FWRule'
+$rule.Name = '{{escapedRuleName}}'
+$rule.Description = 'OmenGamingHubUnlocker'
+$rule.Action = 0
+$rule.Direction = 2
+$rule.Enabled = $true
+$rule.InterfaceTypes = 'All'
+$rule.Profiles = [int]::MaxValue
+$rule.{{identityProperty}} = '{{escapedIdentity}}'
+$policy = New-Object -ComObject 'HNetCfg.FwPolicy2'
+$policy.Rules.Add($rule)
+""";
 
-            dynamic firewallRule = Activator.CreateInstance(firewallRuleType)!;
-            firewallRule.Name = ruleName;
-            firewallRule.Description = "OmenGamingHubUnlocker";
-            firewallRule.Action = 0;
-            firewallRule.Direction = 2;
-            firewallRule.Enabled = true;
-            firewallRule.InterfaceTypes = "All";
-            firewallRule.Profiles = int.MaxValue;
-            configureIdentity(firewallRule);
-
-            dynamic firewallPolicy = Activator.CreateInstance(firewallPolicyType)!;
-            dynamic firewallRules = firewallPolicy.Rules;
-            firewallRules.Add(firewallRule);
-
-            error = string.Empty;
-            return true;
-        }
-        catch (Exception exception)
-        {
-            error = exception.Message;
-            return false;
-        }
+        return PowerShellRunner.TryRunScript(script, out _, out error, 30_000);
     }
 
     private static bool TryAddProgramRulePowerShell(string ruleName, string executablePath, out string error)
@@ -555,19 +664,77 @@ New-NetFirewallRule -DisplayName '{EscapePowerShellLiteral(ruleName)}' `
         }
     }
 
-    private static void TryScanExecutables(string directoryPath, HashSet<string> destination)
+    private static bool ScanExecutables(
+        string directoryPath,
+        HashSet<string> destination,
+        List<string> discoveryErrors,
+        bool requireDirectory)
     {
         try
         {
             if (!Directory.Exists(directoryPath))
-                return;
+                return !requireDirectory;
 
             foreach (var executablePath in Directory.EnumerateFiles(directoryPath, "*.exe", SearchOption.AllDirectories))
                 destination.Add(Path.GetFullPath(executablePath));
+
+            return true;
         }
-        catch
+        catch (Exception exception)
         {
-            // Other locations remain useful when a directory has a transient ACL or update race.
+            discoveryErrors.Add($"{directoryPath}: {exception.Message}");
+            return false;
+        }
+    }
+
+    private static FirewallEnforcementStatus InspectEnforcement()
+    {
+        const string script = """
+$ErrorActionPreference = 'Stop'
+$policy = New-Object -ComObject 'HNetCfg.FwPolicy2'
+[PSCustomObject]@{
+    CurrentProfiles = [int]$policy.CurrentProfileTypes
+    DomainEnabled = [bool]$policy.FirewallEnabled(1)
+    PrivateEnabled = [bool]$policy.FirewallEnabled(2)
+    PublicEnabled = [bool]$policy.FirewallEnabled(4)
+} | ConvertTo-Json -Compress
+""";
+
+        if (!PowerShellRunner.TryRunScript(script, out var output, out var error, 20_000))
+            return FirewallEnforcementStatus.Failed(error);
+
+        try
+        {
+            using var document = JsonDocument.Parse(output);
+            var root = document.RootElement;
+            var currentProfiles = root.TryGetProperty("CurrentProfiles", out var currentProfilesProperty) &&
+                                  currentProfilesProperty.TryGetInt32(out var profileValue)
+                ? profileValue
+                : 0;
+            if (currentProfiles == 0)
+                return FirewallEnforcementStatus.Failed(Text.Get("manager.firewall.noCurrentProfile"));
+
+            var disabledProfiles = new List<string>();
+            foreach (var (profileFlag, profileName, enabledProperty) in new[]
+                     {
+                         (1, "Domain", "DomainEnabled"),
+                         (2, "Private", "PrivateEnabled"),
+                         (4, "Public", "PublicEnabled")
+                     })
+            {
+                if ((currentProfiles & profileFlag) != 0 && !ReadJsonBoolean(root, enabledProperty))
+                    disabledProfiles.Add(profileName);
+            }
+
+            return disabledProfiles.Count == 0
+                ? FirewallEnforcementStatus.Enabled()
+                : FirewallEnforcementStatus.Disabled(Text.Format(
+                    "manager.firewall.disabledProfiles",
+                    string.Join(", ", disabledProfiles)));
+        }
+        catch (Exception exception)
+        {
+            return FirewallEnforcementStatus.Failed(exception.Message);
         }
     }
 
@@ -578,6 +745,21 @@ New-NetFirewallRule -DisplayName '{EscapePowerShellLiteral(ruleName)}' `
 
         public static FirewallRuleQuery Failed(string error)
             => new(false, [], error);
+    }
+
+    private sealed record FirewallEnforcementStatus(
+        bool InspectionSucceeded,
+        bool Active,
+        string Details)
+    {
+        public static FirewallEnforcementStatus Enabled()
+            => new(true, true, Text.Get("manager.firewall.enforcementEnabled"));
+
+        public static FirewallEnforcementStatus Disabled(string details)
+            => new(true, false, details);
+
+        public static FirewallEnforcementStatus Failed(string details)
+            => new(false, false, details);
     }
 
     private static bool HasAnyTarget(this FirewallTargetSet targets)

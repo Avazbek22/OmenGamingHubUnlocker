@@ -129,4 +129,72 @@ public sealed class HostsManagerTests
         Assert.Empty(inspection.Domains);
         Assert.NotEmpty(inspection.Error);
     }
+
+    [Fact]
+    public void Activate_ShouldMergeAnExternalUpdateDetectedBeforeCommit()
+    {
+        using var directory = new TemporaryDirectory();
+        var path = Path.Combine(directory.Path, "hosts");
+        File.WriteAllText(path, "127.0.0.1 localhost\r\n", new UTF8Encoding(false));
+
+        var lines = HostsManager.ActivateHostsBlockAtPath(
+            path,
+            ["api.hpbp.io"],
+            OmenTargets.HostsMarker,
+            dryRun: false,
+            beforeCommit: attempt =>
+            {
+                if (attempt == 1)
+                    File.AppendAllText(path, "10.0.0.1 external-change\r\n");
+            });
+
+        var content = File.ReadAllText(path);
+        Assert.DoesNotContain(lines, line => line.Level == "ERR");
+        Assert.Contains("10.0.0.1 external-change", content);
+        Assert.Contains("api.hpbp.io", content);
+    }
+
+    [Fact]
+    public void Disable_ShouldMergeAnExternalUpdateDetectedBeforeCommit()
+    {
+        using var directory = new TemporaryDirectory();
+        var path = Path.Combine(directory.Path, "hosts");
+        File.WriteAllText(
+            path,
+            $"127.0.0.1 api.hpbp.io {OmenTargets.HostsMarker}\r\n",
+            new UTF8Encoding(false));
+
+        var lines = HostsManager.DisableHostsBlockAtPath(
+            path,
+            OmenTargets.HostsMarker,
+            dryRun: false,
+            beforeCommit: attempt =>
+            {
+                if (attempt == 1)
+                    File.AppendAllText(path, "10.0.0.1 external-change\r\n");
+            });
+
+        var content = File.ReadAllText(path);
+        Assert.DoesNotContain(lines, line => line.Level == "ERR");
+        Assert.Contains("10.0.0.1 external-change", content);
+        Assert.DoesNotContain(OmenTargets.HostsMarker, content);
+    }
+
+    [Fact]
+    public void Mutation_ShouldFailClosedWhenTheFileNeverStabilizes()
+    {
+        using var directory = new TemporaryDirectory();
+        var path = Path.Combine(directory.Path, "hosts");
+        File.WriteAllText(path, "127.0.0.1 localhost\r\n", new UTF8Encoding(false));
+
+        var lines = HostsManager.ActivateHostsBlockAtPath(
+            path,
+            ["api.hpbp.io"],
+            OmenTargets.HostsMarker,
+            dryRun: false,
+            beforeCommit: attempt => File.AppendAllText(path, $"# external-{attempt}\r\n"));
+
+        Assert.Contains(lines, line => line.Level == "ERR");
+        Assert.DoesNotContain(OmenTargets.HostsMarker, File.ReadAllText(path));
+    }
 }

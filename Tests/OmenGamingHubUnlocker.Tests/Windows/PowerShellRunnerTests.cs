@@ -22,12 +22,30 @@ public sealed class PowerShellRunnerTests
     }
 
     [Fact]
+    public void TryRun_ShouldDrainLargeStandardOutputAndErrorWithoutDeadlocking()
+    {
+        var result = PowerShellRunner.TryRun(
+            "powershell.exe",
+            "-NoProfile -Command \"1..2000 | ForEach-Object { Write-Output ('out-' + $_); [Console]::Error.WriteLine('err-' + $_) }\"",
+            out var stdout,
+            out var stderr,
+            15_000);
+
+        Assert.True(result);
+        Assert.Contains("out-2000", stdout, StringComparison.Ordinal);
+        Assert.Contains("err-2000", stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TryRun_ShouldFailWithTimeoutMessage_WhenCommandHangs()
     {
+        var stopwatch = Stopwatch.StartNew();
+
         var result = PowerShellRunner.TryRun("cmd.exe", "/c ping 127.0.0.1 -n 8 > nul", out _, out var stderr, 200);
 
         Assert.False(result);
         Assert.Contains("timed out", stderr, StringComparison.OrdinalIgnoreCase);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(7));
     }
 
     [Fact]
@@ -36,6 +54,23 @@ public sealed class PowerShellRunnerTests
         var (ok, details) = PowerShellRunner.CheckAvailability();
 
         Assert.False(string.IsNullOrWhiteSpace(details));
-        Assert.True(ok || !ok);
+        Assert.Equal(File.Exists(WindowsPaths.WindowsPowerShell), ok);
+    }
+
+    [Fact]
+    public void TryRunArgumentList_ShouldPreserveShellMetacharactersAsLiteralData()
+    {
+        const string argument = "OMEN value & whoami | ignored; 'quoted' \"double quoted\" %PATH%";
+
+        var succeeded = PowerShellRunner.TryRun(
+            E2EHostRunner.ExecutablePath,
+            ["echo-argument", argument],
+            out var output,
+            out var error,
+            5_000);
+
+        Assert.True(succeeded, error);
+        Assert.Equal(argument, output);
+        Assert.Equal(string.Empty, error);
     }
 }

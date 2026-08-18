@@ -33,6 +33,27 @@ public sealed class ConsoleActivityIndicatorTests
         Assert.Equal(1, taskbarProgress.DisposeCount);
     }
 
+    [Fact]
+    public void Run_ShouldRenderProgressStagesReportedByTheOperation()
+    {
+        using var capture = new ConsoleOutputCapture();
+
+        var result = ConsoleActivityIndicator.Run(
+            "Preparing",
+            progress =>
+            {
+                progress.Report("Waiting for restored files");
+                progress.Report("Verifying protection");
+                return 42;
+            });
+
+        var output = capture.GetOutput();
+        Assert.Equal(42, result);
+        Assert.Contains("Preparing", output);
+        Assert.Contains("Waiting for restored files", output);
+        Assert.Contains("Verifying protection", output);
+    }
+
     private sealed class RecordingTaskbarProgressService : ITaskbarProgressService
     {
         public int BeginCount { get; private set; }

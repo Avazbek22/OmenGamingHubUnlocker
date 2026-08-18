@@ -67,17 +67,21 @@ public static class AppContainerSidResolver
     }
 
     [DllImport("userenv.dll", CharSet = CharSet.Unicode)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern int DeriveAppContainerSidFromAppContainerName(
         string appContainerName,
         out nint appContainerSid);
 
     [DllImport("advapi32.dll", EntryPoint = "ConvertSidToStringSidW", SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ConvertSidToStringSid(nint sid, out nint stringSid);
 
     [DllImport("advapi32.dll")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern nint FreeSid(nint sid);
 
     [DllImport("kernel32.dll")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern nint LocalFree(nint memory);
 }

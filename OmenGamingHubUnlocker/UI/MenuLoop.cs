@@ -233,7 +233,7 @@ public sealed class MenuLoop(
 
         var operationReport = ConsoleActivityIndicator.Run(
             Text.Get("activity.reset"),
-            () => engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply()),
+            progress => engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply(), progress),
             taskbarProgress);
         PrintOperationReport(operationReport, ConsoleTable.StatusIntent.AfterActivate, showResultColumn: true, predictive: false);
         ConsoleHelpers.Pause();

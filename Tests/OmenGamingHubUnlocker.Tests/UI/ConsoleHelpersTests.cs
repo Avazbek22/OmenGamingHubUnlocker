@@ -46,4 +46,22 @@ public sealed class ConsoleHelpersTests
         Assert.Contains("line1", output);
         Assert.Contains("line2", output);
     }
+
+    [Fact]
+    public void ReadMenuChoice_ShouldExitWhenInputReachesEndOfFile()
+    {
+        var originalInput = Console.In;
+        using var capture = new ConsoleOutputCapture();
+        using var emptyInput = new StringReader(string.Empty);
+        Console.SetIn(emptyInput);
+
+        try
+        {
+            Assert.Equal("0", ConsoleHelpers.ReadMenuChoice());
+        }
+        finally
+        {
+            Console.SetIn(originalInput);
+        }
+    }
 }
