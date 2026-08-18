@@ -9,21 +9,15 @@ public static class PowerShellRunner
 
     public static (bool ok, string details) CheckAvailability()
     {
-        var systemPowerShellPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.System),
-            "WindowsPowerShell\\v1.0\\powershell.exe");
-
-        if (File.Exists(systemPowerShellPath))
+        if (File.Exists(WindowsPaths.WindowsPowerShell))
             return (true, Text.Get("manager.powershell.found"));
 
-        return (
-            TryRun("powershell", "-NoProfile -Command \"$PSVersionTable.PSVersion.ToString()\"", out var output, out var error, 15_000),
-            string.IsNullOrWhiteSpace(error) ? output.Trim() : error.Trim());
+        return (false, Text.Get("manager.powershell.notFound"));
     }
 
     public static (bool ok, string details) CheckNetshAvailability()
     {
-        var netshPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "netsh.exe");
+        var netshPath = WindowsPaths.GetSystemExecutable("netsh.exe");
         return File.Exists(netshPath)
             ? (true, Text.Get("manager.powershell.netshFound"))
             : (false, Text.Get("manager.powershell.netshNotFound"));
@@ -102,7 +96,7 @@ public static class PowerShellRunner
     {
         var encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
         return TryRun(
-            "powershell.exe",
+            WindowsPaths.WindowsPowerShell,
             $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encodedScript}",
             out standardOutput,
             out standardError,

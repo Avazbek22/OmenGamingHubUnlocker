@@ -120,11 +120,12 @@ public static class ConsoleHelpers
 
         try
         {
-            return (Console.ReadLine() ?? string.Empty).Trim();
+            // End-of-input is treated as Exit so redirected launches cannot spin forever.
+            return (Console.ReadLine() ?? "0").Trim();
         }
         catch (IOException)
         {
-            return string.Empty;
+            return "0";
         }
     }
 
@@ -149,7 +150,12 @@ public static class ConsoleHelpers
             }
             catch (InvalidOperationException)
             {
-                return true;
+                // A destructive action must never be implicitly confirmed without an interactive console.
+                return false;
+            }
+            catch (IOException)
+            {
+                return false;
             }
         }
     }

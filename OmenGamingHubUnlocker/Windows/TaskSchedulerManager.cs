@@ -131,7 +131,7 @@ public static class TaskSchedulerManager
             {
                 var schtasksFlag = desiredEnabled ? "/ENABLE" : "/DISABLE";
                 var fallbackApplied = PowerShellRunner.TryRun(
-                    "schtasks.exe",
+                    WindowsPaths.GetSystemExecutable("schtasks.exe"),
                     $"/Change /TN \"{currentTask.Path}\" {schtasksFlag}",
                     out _,
                     out var fallbackError,
@@ -189,7 +189,7 @@ public static class TaskSchedulerManager
             catch (Exception exception)
             {
                 var fallbackApplied = PowerShellRunner.TryRun(
-                    "schtasks.exe",
+                    WindowsPaths.GetSystemExecutable("schtasks.exe"),
                     $"/End /TN \"{taskPath}\"",
                     out _,
                     out var fallbackError,
@@ -198,6 +198,64 @@ public static class TaskSchedulerManager
                 operationLines.Add(fallbackApplied
                     ? LocalizedLine.Warn("manager.tasks.stopFallbackApplied", taskPath)
                     : LocalizedLine.Err("manager.tasks.failedToStop", taskPath, exception.Message, fallbackError));
+            }
+        }
+
+        return operationLines;
+    }
+
+    public static List<OperationLine> StartTasks(IEnumerable<string> taskPaths, bool dryRun)
+    {
+        var requestedPaths = taskPaths
+            .Select(NormalizeTaskPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (requestedPaths.Count == 0)
+            return [LocalizedLine.Info("manager.tasks.nothingToStart")];
+
+        var currentTasks = QueryTasks([])
+            .ToDictionary(task => NormalizeTaskPath(task.Path), StringComparer.OrdinalIgnoreCase);
+        var operationLines = new List<OperationLine>();
+
+        foreach (var taskPath in requestedPaths)
+        {
+            if (!currentTasks.TryGetValue(taskPath, out var currentTask))
+            {
+                operationLines.Add(LocalizedLine.Err("manager.tasks.notFound", taskPath));
+                continue;
+            }
+
+            if (currentTask.RequiresStop)
+            {
+                operationLines.Add(LocalizedLine.Info("manager.tasks.alreadyRunning", taskPath));
+                continue;
+            }
+
+            if (dryRun)
+            {
+                operationLines.Add(LocalizedLine.Ok("manager.tasks.wouldStart", taskPath));
+                continue;
+            }
+
+            try
+            {
+                StartViaCom(taskPath);
+                operationLines.Add(LocalizedLine.Ok("manager.tasks.started", taskPath));
+            }
+            catch (Exception exception)
+            {
+                var fallbackApplied = PowerShellRunner.TryRun(
+                    WindowsPaths.GetSystemExecutable("schtasks.exe"),
+                    $"/Run /TN \"{taskPath}\"",
+                    out _,
+                    out var fallbackError,
+                    20_000);
+
+                operationLines.Add(fallbackApplied
+                    ? LocalizedLine.Warn("manager.tasks.startFallbackApplied", taskPath)
+                    : LocalizedLine.Err("manager.tasks.failedToStart", taskPath, exception.Message, fallbackError));
             }
         }
 
@@ -219,10 +277,12 @@ public static class TaskSchedulerManager
             IReadOnlyList<string> actionPaths = ReadActionPaths(task);
 
             if (matchEverything ||
-                patterns.Any(pattern =>
+                (patterns.Any(pattern =>
                     WildcardMatcher.IsMatch(taskName, pattern) ||
                     WildcardMatcher.IsMatch(taskPath, pattern) ||
-                    actionPaths.Any(action => WildcardMatcher.IsMatch(action, pattern))))
+                    actionPaths.Any(action => WildcardMatcher.IsMatch(action, pattern))) &&
+                 OmenIdentity.IsLikelyOmenReference(
+                     [taskName, taskPath, .. actionPaths])))
             {
                 destination.Add(new TaskItem(taskPath, isEnabled, taskState, actionPaths));
             }
@@ -272,6 +332,24 @@ public static class TaskSchedulerManager
         dynamic folder = taskScheduler.GetFolder(folderPath);
         dynamic task = folder.GetTask(taskName);
         task.Stop(0);
+    }
+
+    private static void StartViaCom(string taskPath)
+    {
+        var schedulerType = Type.GetTypeFromProgID("Schedule.Service")
+                            ?? throw new InvalidOperationException(Text.Get("manager.taskScheduler.capabilityNotAvailable"));
+
+        dynamic taskScheduler = Activator.CreateInstance(schedulerType)!;
+        taskScheduler.Connect();
+
+        var normalizedTaskPath = NormalizeTaskPath(taskPath);
+        var lastPathSeparator = normalizedTaskPath.LastIndexOf('\\');
+        var folderPath = lastPathSeparator <= 0 ? "\\" : normalizedTaskPath[..lastPathSeparator];
+        var taskName = normalizedTaskPath[(lastPathSeparator + 1)..];
+
+        dynamic folder = taskScheduler.GetFolder(folderPath);
+        dynamic task = folder.GetTask(taskName);
+        task.Run(null);
     }
 
     private static List<string> ReadActionPaths(dynamic task)

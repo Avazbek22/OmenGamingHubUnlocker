@@ -8,7 +8,8 @@ public sealed class WindowsUnlockerOperations : IUnlockerOperations
     public IReadOnlyList<ProcessItem> QueryTargetProcesses()
         => ProcessManager.QueryTargetProcesses(
             OmenTargets.ProcessNamePatterns,
-            FirewallManager.DiscoverCandidateExecutables());
+            DiscoverFirewallTargets().AllExecutables,
+            requireTrustedOmenIdentity: true);
 
     public IReadOnlyList<ServiceItem> QueryTargetServices()
         => ServiceManager.QueryServices(OmenTargets.ServicePatterns);
@@ -23,13 +24,35 @@ public sealed class WindowsUnlockerOperations : IUnlockerOperations
         => UserContextManager.Inspect();
 
     public FirewallProtectionStatus InspectFirewallProtection()
-        => FirewallManager.InspectProtection(OmenTargets.FirewallRulePrefix);
+    {
+        var targets = DiscoverFirewallTargets();
+        return FirewallManager.InspectProtection(OmenTargets.FirewallRulePrefix, targets);
+    }
 
     public HostsInspection InspectHosts()
         => HostsManager.Inspect(OmenTargets.HostsDomains, OmenTargets.HostsMarker);
 
     public FirewallTargetSet DiscoverFirewallTargets()
-        => FirewallManager.DiscoverTargets();
+    {
+        var baseTargets = FirewallManager.DiscoverTargets();
+        var additionalExecutables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var discoveryErrors = baseTargets.ScanErrors.ToList();
+
+        TryDiscoverServiceExecutables(additionalExecutables, discoveryErrors);
+        TryDiscoverTaskExecutables(additionalExecutables, discoveryErrors);
+        TryDiscoverRunEntryExecutables(additionalExecutables, discoveryErrors);
+
+        return new FirewallTargetSet(
+            baseTargets.Package,
+            baseTargets.PackageSid,
+            baseTargets.PackageSidError,
+            baseTargets.PackageExecutables,
+            baseTargets.ExternalExecutables
+                .Concat(additionalExecutables)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase),
+            baseTargets.PackageDirectoryReady,
+            discoveryErrors);
+    }
 
     public IReadOnlyList<string> DiscoverFirewallExecutables()
         => DiscoverFirewallTargets().AllExecutables
@@ -94,6 +117,9 @@ public sealed class WindowsUnlockerOperations : IUnlockerOperations
     public IReadOnlyList<OperationLine> StopTasks(IEnumerable<string> taskPaths, bool dryRun)
         => TaskSchedulerManager.StopTasks(taskPaths, dryRun);
 
+    public IReadOnlyList<OperationLine> StartTasks(IEnumerable<string> taskPaths, bool dryRun)
+        => TaskSchedulerManager.StartTasks(taskPaths, dryRun);
+
     public IReadOnlyList<OperationLine> RemoveRunEntries(IEnumerable<RunEntry> entries, bool dryRun)
         => RegistryRunManager.RemoveEntries(entries, dryRun);
 
@@ -103,14 +129,19 @@ public sealed class WindowsUnlockerOperations : IUnlockerOperations
     public IReadOnlyList<OperationLine> TerminateTargetProcesses(bool dryRun)
         => ProcessManager.TerminateTargetProcesses(
             OmenTargets.ProcessNamePatterns,
-            FirewallManager.DiscoverCandidateExecutables(),
-            dryRun);
+            DiscoverFirewallTargets().AllExecutables,
+            dryRun,
+            requireTrustedOmenIdentity: true);
 
     public IReadOnlyList<OperationLine> ActivateFirewall(bool dryRun, bool removeStaleRules = false)
-        => FirewallManager.ActivateFirewallBlock(
+    {
+        var targets = DiscoverFirewallTargets();
+        return FirewallManager.ActivateFirewallBlock(
             OmenTargets.FirewallRulePrefix,
             dryRun,
-            removeStaleRules);
+            removeStaleRules,
+            targets);
+    }
 
     public IReadOnlyList<OperationLine> DisableFirewall(bool dryRun)
         => FirewallManager.DisableFirewallBlock(OmenTargets.FirewallRulePrefix, dryRun);
@@ -123,4 +154,64 @@ public sealed class WindowsUnlockerOperations : IUnlockerOperations
 
     public IReadOnlyList<OperationLine> ResetPackage(bool dryRun)
         => AppxPackageManager.ResetPackage(OmenTargets.AppxFilters, dryRun);
+
+    private static void TryDiscoverServiceExecutables(
+        HashSet<string> destination,
+        List<string> discoveryErrors)
+    {
+        try
+        {
+            foreach (var service in ServiceManager.QueryServices(OmenTargets.ServicePatterns))
+                TryAddExecutable(service.PathName, destination, service.Name, service.DisplayName);
+        }
+        catch (Exception exception)
+        {
+            discoveryErrors.Add($"Service executable discovery: {exception.Message}");
+        }
+    }
+
+    private static void TryDiscoverTaskExecutables(
+        HashSet<string> destination,
+        List<string> discoveryErrors)
+    {
+        try
+        {
+            foreach (var task in TaskSchedulerManager.QueryTasks(OmenTargets.TaskPatterns))
+            {
+                foreach (var actionPath in task.ActionPaths)
+                    TryAddExecutable(actionPath, destination, task.Path);
+            }
+        }
+        catch (Exception exception)
+        {
+            discoveryErrors.Add($"Scheduled task executable discovery: {exception.Message}");
+        }
+    }
+
+    private static void TryDiscoverRunEntryExecutables(
+        HashSet<string> destination,
+        List<string> discoveryErrors)
+    {
+        try
+        {
+            foreach (var entry in RegistryRunManager.QueryRunEntries(OmenTargets.RunEntryPatterns))
+                TryAddExecutable(entry.Value, destination, entry.Name);
+        }
+        catch (Exception exception)
+        {
+            discoveryErrors.Add($"Run entry executable discovery: {exception.Message}");
+        }
+    }
+
+    private static void TryAddExecutable(
+        string commandLine,
+        HashSet<string> destination,
+        params string[] identities)
+    {
+        if (ExecutablePathResolver.TryResolveExistingExecutable(commandLine, out var executablePath) &&
+            OmenExecutableTrust.IsTrustedOmenExecutable(executablePath, identities))
+        {
+            destination.Add(executablePath);
+        }
+    }
 }

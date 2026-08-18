@@ -22,4 +22,32 @@ public sealed class WindowsPathsTests
         Assert.True(System.IO.Path.IsPathRooted(WindowsPaths.ProgramFilesX86));
         Assert.False(string.IsNullOrWhiteSpace(WindowsPaths.ProgramFilesX86));
     }
+
+    [Fact]
+    public void GetSystemExecutable_ShouldReturnAbsoluteSystemPath()
+    {
+        var path = WindowsPaths.GetSystemExecutable("sc.exe");
+
+        Assert.True(Path.IsPathRooted(path));
+        Assert.Equal(WindowsPaths.SystemDirectory, Path.GetDirectoryName(path), ignoreCase: true);
+        Assert.Equal("sc.exe", Path.GetFileName(path), ignoreCase: true);
+    }
+
+    [Fact]
+    public void WindowsPowerShell_ShouldUseTheSystemDirectory()
+    {
+        Assert.True(Path.IsPathRooted(WindowsPaths.WindowsPowerShell));
+        Assert.StartsWith(
+            WindowsPaths.SystemDirectory,
+            WindowsPaths.WindowsPowerShell,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(@"..\sc.exe")]
+    [InlineData(@"subdirectory\sc.exe")]
+    public void GetSystemExecutable_ShouldRejectPathTraversal(string fileName)
+    {
+        Assert.Throws<ArgumentException>(() => WindowsPaths.GetSystemExecutable(fileName));
+    }
 }

@@ -41,6 +41,7 @@ public sealed class UnlockerEngineTests
         Assert.Equal("Automatic", service.OriginalStartMode);
         Assert.True(service.OriginalRunning);
         Assert.True(Assert.Single(stateStore.State.Tasks).OriginalEnabled);
+        Assert.True(Assert.Single(stateStore.State.Tasks).OriginalRunning);
         Assert.Single(stateStore.State.RunEntries);
     }
 
@@ -441,6 +442,78 @@ public sealed class UnlockerEngineTests
     }
 
     [Fact]
+    public void Disable_ShouldRestorePreviouslyRunningScheduledTask()
+    {
+        var operations = CreateTamedOperations();
+        var stateStore = new InMemoryStateStore
+        {
+            State = new UnlockerState
+            {
+                Tasks = [new TaskBackup(@"\OmenTask", true, true)]
+            }
+        };
+        var engine = new UnlockerEngine(operations, stateStore, new RecordingDelay());
+
+        var report = engine.Disable(UnlockerOptions.ForDisable());
+
+        Assert.True(report.Success);
+        var task = Assert.Single(operations.Tasks);
+        Assert.True(task.Enabled);
+        Assert.True(task.RequiresStop);
+        Assert.Contains("StartTasks", operations.Calls);
+    }
+
+    [Fact]
+    public void Disable_ShouldKeepProtection_WhenNoActivationBackupExists()
+    {
+        var operations = CreateTamedOperations();
+        var stateStore = new InMemoryStateStore();
+        var engine = new UnlockerEngine(operations, stateStore, new RecordingDelay());
+
+        var report = engine.Disable(UnlockerOptions.ForDisable());
+
+        Assert.False(report.Success);
+        Assert.DoesNotContain("DisableFirewall", operations.Calls);
+        Assert.DoesNotContain("DisableHosts", operations.Calls);
+        Assert.True(operations.Firewall.IsComplete);
+        Assert.True(operations.Hosts.AllBlocked);
+        Assert.False(stateStore.ClearCalled);
+    }
+
+    [Fact]
+    public void Disable_ShouldNotOverwriteRunEntryChangedAfterActivation()
+    {
+        var operations = CreateTamedOperations();
+        operations.RunEntries.Add(new RunEntry(
+            RegistryHive.CurrentUser,
+            RegistryView.Registry64,
+            "OmenBackground",
+            "Changed.exe"));
+        var stateStore = new InMemoryStateStore
+        {
+            State = new UnlockerState
+            {
+                RunEntries =
+                [
+                    new RunEntryBackup(
+                        RegistryHive.CurrentUser,
+                        RegistryView.Registry64,
+                        "OmenBackground",
+                        "Original.exe")
+                ]
+            }
+        };
+        var engine = new UnlockerEngine(operations, stateStore, new RecordingDelay());
+
+        var report = engine.Disable(UnlockerOptions.ForDisable());
+
+        Assert.False(report.Success);
+        Assert.Equal("Changed.exe", Assert.Single(operations.RunEntries).Value);
+        Assert.DoesNotContain("DisableFirewall", operations.Calls);
+        Assert.True(operations.Firewall.IsComplete);
+    }
+
+    [Fact]
     public void Disable_ShouldKeepNetworkProtectionAndBackup_WhenRestoreFails()
     {
         var operations = CreateTamedOperations();
@@ -491,6 +564,43 @@ public sealed class UnlockerEngineTests
         Assert.NotEmpty(operations.Processes);
         Assert.NotEmpty(operations.RunEntries);
         Assert.Empty(stateStore.State.Services);
+    }
+
+    [Fact]
+    public void Activate_ShouldNotMutate_WhenAnotherOperationOwnsTheMachineLock()
+    {
+        var operations = CreateTamedOperations();
+        var operationLock = new RecordingOperationLock { Available = false };
+        var engine = new UnlockerEngine(
+            operations,
+            new InMemoryStateStore(),
+            new RecordingDelay(),
+            operationLock);
+
+        var report = engine.Activate(UnlockerOptions.ForActivate());
+
+        Assert.False(report.Success);
+        Assert.Equal(1, operationLock.AcquireCount);
+        Assert.DoesNotContain("ActivateFirewall", operations.Calls);
+        Assert.DoesNotContain("SetServiceModes", operations.Calls);
+    }
+
+    [Fact]
+    public void Activate_ShouldReleaseMachineLockAfterCompletion()
+    {
+        var operations = CreateTamedOperations();
+        var operationLock = new RecordingOperationLock();
+        var engine = new UnlockerEngine(
+            operations,
+            new InMemoryStateStore(),
+            new RecordingDelay(),
+            operationLock);
+
+        var report = engine.Activate(UnlockerOptions.ForActivate());
+
+        Assert.True(report.Success);
+        Assert.Equal(1, operationLock.AcquireCount);
+        Assert.Equal(1, operationLock.ReleaseCount);
     }
 
     [Fact]

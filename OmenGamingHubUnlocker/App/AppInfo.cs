@@ -193,6 +193,7 @@ public sealed class AppInfo
         => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
 
     [DllImport("ntdll.dll", ExactSpelling = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern int RtlGetVersion(ref RtlOsVersionInfoExw versionInformation);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -219,5 +220,6 @@ public sealed class AppInfo
     private static extern IntPtr BrandingFormatString(string format);
 
     [DllImport("kernel32.dll", ExactSpelling = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern IntPtr GlobalFree(IntPtr memoryHandle);
 }

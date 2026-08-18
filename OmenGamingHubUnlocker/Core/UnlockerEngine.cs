@@ -14,21 +14,28 @@ public sealed class UnlockerEngine
     private readonly IUnlockerOperations _operations;
     private readonly IUnlockerStateStore _stateStore;
     private readonly IOperationDelay _delay;
+    private readonly IOperationLock _operationLock;
     private readonly UnlockerStatusService _statusService;
 
     public UnlockerEngine()
-        : this(new WindowsUnlockerOperations(), new UnlockerStateStore(), new ThreadOperationDelay())
+        : this(
+            new WindowsUnlockerOperations(),
+            new UnlockerStateStore(),
+            new ThreadOperationDelay(),
+            new MachineOperationLock())
     {
     }
 
     public UnlockerEngine(
         IUnlockerOperations operations,
         IUnlockerStateStore stateStore,
-        IOperationDelay? delay = null)
+        IOperationDelay? delay = null,
+        IOperationLock? operationLock = null)
     {
         _operations = operations ?? throw new ArgumentNullException(nameof(operations));
         _stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
         _delay = delay ?? new ThreadOperationDelay();
+        _operationLock = operationLock ?? new MachineOperationLock();
         _statusService = new UnlockerStatusService(_operations);
     }
 
@@ -113,6 +120,13 @@ public sealed class UnlockerEngine
         ArgumentNullException.ThrowIfNull(options);
 
         var report = OperationReport.Ok(Text.Get("engine.title.activationCompleted"));
+        if (!TryAcquireOperationLock(report, options, out var operationLease))
+        {
+            CompleteReport(report, Text.Get("engine.title.activationFailed"));
+            return report;
+        }
+
+        using var lease = operationLease;
         if (!ValidateUserContext(report, options))
         {
             CompleteReport(report, Text.Get("engine.title.activationFailed"));
@@ -135,6 +149,13 @@ public sealed class UnlockerEngine
         ArgumentNullException.ThrowIfNull(options);
 
         var report = OperationReport.Ok(Text.Get("engine.title.resetCompleted"));
+        if (!TryAcquireOperationLock(report, options, out var operationLease))
+        {
+            CompleteReport(report, Text.Get("engine.title.resetFailed"));
+            return report;
+        }
+
+        using var lease = operationLease;
         report.Lines.Add(LocalizedLine.Info("engine.resetStarted"));
         progress?.Report(Text.Get("activity.reset.preparing"));
         if (!ValidateUserContext(report, options))
@@ -155,7 +176,8 @@ public sealed class UnlockerEngine
         if (!options.DryRun)
         {
             report.Lines.Add(LocalizedLine.Info("engine.postResetDiscovery"));
-            WaitForStablePostResetTargets(progress);
+            if (!WaitForStablePostResetTargets(progress))
+                report.Lines.Add(LocalizedLine.Warn("engine.postResetTargetsUnstable"));
         }
 
         // Reset can recreate package registrations and background activity, so all targets are rediscovered.
@@ -179,6 +201,13 @@ public sealed class UnlockerEngine
         ArgumentNullException.ThrowIfNull(options);
 
         var report = OperationReport.Ok(Text.Get("engine.title.disableCompleted"));
+        if (!TryAcquireOperationLock(report, options, out var operationLease))
+        {
+            CompleteReport(report, Text.Get("engine.title.disableFailed"));
+            return report;
+        }
+
+        using var lease = operationLease;
         if (!ValidateUserContext(report, options))
         {
             CompleteReport(report, Text.Get("engine.title.disableFailed"));
@@ -194,6 +223,13 @@ public sealed class UnlockerEngine
         }
 
         var state = stateResult.State;
+        if (!state.HasRollbackRecord)
+        {
+            report.Lines.Add(LocalizedLine.Err("engine.rollbackBackupMissing"));
+            CompleteReport(report, Text.Get("engine.title.disableFailed"));
+            return report;
+        }
+
         RestoreStartupState(report, state, options);
 
         if (!options.DryRun)
@@ -539,7 +575,7 @@ public sealed class UnlockerEngine
             var tasks = plan.TasksToDisable
                 .Concat(plan.TasksToStop)
                 .DistinctBy(task => task.Path, StringComparer.OrdinalIgnoreCase)
-                .Select(task => new TaskBackup(task.Path, task.Enabled));
+                .Select(task => new TaskBackup(task.Path, task.Enabled, task.RequiresStop));
             var runEntries = plan.RunEntriesToRemove.Select(entry =>
                 new RunEntryBackup(entry.Hive, entry.View, entry.Name, entry.Value, entry.ValueKind));
 
@@ -612,6 +648,20 @@ public sealed class UnlockerEngine
                 state.Tasks.Select(task => new TaskEnableTarget(task.Path, task.OriginalEnabled)),
                 options.DryRun),
             "engine.tasksRestoreFailed");
+
+        AddOperationLines(
+            report,
+            () => _operations.StopTasks(
+                state.Tasks.Where(task => !task.OriginalRunning).Select(task => task.Path),
+                options.DryRun),
+            "engine.tasksStopFailed");
+
+        AddOperationLines(
+            report,
+            () => _operations.StartTasks(
+                state.Tasks.Where(task => task.OriginalRunning).Select(task => task.Path),
+                options.DryRun),
+            "engine.tasksStartFailed");
 
         AddOperationLines(
             report,
@@ -863,6 +913,30 @@ public sealed class UnlockerEngine
                 report.Lines.Add(LocalizedLine.Err("engine.firewallInspectionFailed", exception.Message));
 
             return EmptyFirewallStatus(exception.Message);
+        }
+    }
+
+    private bool TryAcquireOperationLock(
+        OperationReport report,
+        UnlockerOptions options,
+        out IDisposable? lease)
+    {
+        lease = null;
+        if (options.DryRun)
+            return true;
+
+        try
+        {
+            if (_operationLock.TryAcquire(out lease, out var failureDetails))
+                return true;
+
+            report.Lines.Add(LocalizedLine.Err("engine.operationLockUnavailable", failureDetails));
+            return false;
+        }
+        catch (Exception exception)
+        {
+            report.Lines.Add(LocalizedLine.Err("engine.operationLockUnavailable", exception.Message));
+            return false;
         }
     }
 

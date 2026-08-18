@@ -198,6 +198,23 @@ internal sealed class FakeUnlockerOperations : IUnlockerOperations
         return [Ok("Tasks stopped")];
     }
 
+    public IReadOnlyList<OperationLine> StartTasks(IEnumerable<string> taskPaths, bool dryRun)
+    {
+        Calls.Add("StartTasks");
+        if (dryRun)
+            return [Ok("Would start tasks")];
+
+        foreach (var path in taskPaths)
+        {
+            var index = Tasks.FindIndex(task =>
+                task.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
+            if (index >= 0)
+                Tasks[index] = Tasks[index] with { State = "Running" };
+        }
+
+        return [Ok("Tasks started")];
+    }
+
     public IReadOnlyList<OperationLine> RemoveRunEntries(IEnumerable<RunEntry> entries, bool dryRun)
     {
         Calls.Add("RemoveRunEntries");
@@ -215,19 +232,28 @@ internal sealed class FakeUnlockerOperations : IUnlockerOperations
         bool dryRun)
     {
         Calls.Add("RestoreRunEntries");
-        if (!dryRun)
+        var lines = new List<OperationLine>();
+        foreach (var entry in entries)
         {
-            foreach (var entry in entries)
+            var identity = $"{entry.Hive}|{entry.View}|{entry.Name}";
+            var existing = RunEntries.FirstOrDefault(current =>
+                RunEntryIdentity(current).Equals(identity, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null)
             {
-                var restored = new RunEntry(entry.Hive, entry.View, entry.Name, entry.Value);
-                RunEntries.RemoveAll(current => RunEntryIdentity(current).Equals(
-                    RunEntryIdentity(restored),
-                    StringComparison.OrdinalIgnoreCase));
-                RunEntries.Add(restored);
+                lines.Add(existing.Value.Equals(entry.Value, StringComparison.Ordinal) &&
+                          existing.ValueKind == entry.ValueKind
+                    ? Ok("Run entry already restored")
+                    : Error("Run entry restore conflict"));
+                continue;
             }
+
+            if (!dryRun)
+                RunEntries.Add(new RunEntry(entry.Hive, entry.View, entry.Name, entry.Value, entry.ValueKind));
+
+            lines.Add(Ok(dryRun ? "Would restore Run entry" : "Run entry restored"));
         }
 
-        return [Ok("Run entries restored")];
+        return lines.Count == 0 ? [Ok("No Run entries to restore")] : lines;
     }
 
     public IReadOnlyList<OperationLine> TerminateTargetProcesses(bool dryRun)
@@ -392,6 +418,8 @@ internal sealed class InMemoryStateStore : IUnlockerStateStore
         if (ThrowOnPersist)
             throw new IOException("state backup is unavailable");
 
+        State.ActivationRecorded = true;
+
         Merge(
             State.Services,
             serviceBackups,
@@ -435,5 +463,35 @@ internal sealed class RecordingDelay : IOperationDelay
     {
         Assert.True(delay > TimeSpan.Zero);
         WaitCount++;
+    }
+}
+
+internal sealed class RecordingOperationLock : IOperationLock
+{
+    public bool Available { get; set; } = true;
+    public int AcquireCount { get; private set; }
+    public int ReleaseCount { get; private set; }
+
+    public bool TryAcquire(out IDisposable? lease, out string failureDetails)
+    {
+        AcquireCount++;
+        if (!Available)
+        {
+            lease = null;
+            failureDetails = "operation already running";
+            return false;
+        }
+
+        lease = new ActionScope(() => ReleaseCount++);
+        failureDetails = string.Empty;
+        return true;
+    }
+
+    private sealed class ActionScope(Action dispose) : IDisposable
+    {
+        private Action? _dispose = dispose;
+
+        public void Dispose()
+            => Interlocked.Exchange(ref _dispose, null)?.Invoke();
     }
 }

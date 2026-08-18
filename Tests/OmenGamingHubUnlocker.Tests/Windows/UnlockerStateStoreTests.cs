@@ -42,6 +42,8 @@ public sealed class UnlockerStateStoreTests
         Assert.Equal("svc", state.Services[0].Name);
         Assert.True(state.Services[0].OriginalRunning);
         Assert.Equal(@"\task", state.Tasks[0].Path);
+        Assert.True(state.ActivationRecorded);
+        Assert.NotEmpty(state.OwnerUserSid);
         Assert.Equal("entry", state.RunEntries[0].Name);
         Assert.Equal("%LOCALAPPDATA%\\Omen.exe", state.RunEntries[0].Value);
         Assert.Equal(RegistryValueKind.ExpandString, state.RunEntries[0].ValueKind);
@@ -170,5 +172,39 @@ public sealed class UnlockerStateStoreTests
         Assert.Equal(
             stores.Count,
             state.Services.Select(service => service.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
+    [Fact]
+    public void State_ShouldNotBeReadableOrClearableByAnotherUserSid()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var statePath = Path.Combine(temporaryDirectory.Path, "state.json");
+        var ownerStore = new UnlockerStateStore(statePath, "S-1-5-21-1000");
+        var otherUserStore = new UnlockerStateStore(statePath, "S-1-5-21-2000");
+        ownerStore.PersistBackups([new ServiceBackup("svc", "Automatic")], [], []);
+
+        var loadResult = otherUserStore.LoadState();
+        var cleared = otherUserStore.TryClear(out var clearError);
+
+        Assert.False(loadResult.Success);
+        Assert.Contains("S-1-5-21-1000", loadResult.Error, StringComparison.Ordinal);
+        Assert.False(cleared);
+        Assert.NotEmpty(clearError);
+        Assert.True(File.Exists(statePath));
+    }
+
+    [Fact]
+    public void PersistBackups_ShouldPreserveOriginalTaskRunningState()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var store = new UnlockerStateStore(
+            Path.Combine(temporaryDirectory.Path, "state.json"),
+            "S-1-5-21-1000");
+
+        store.PersistBackups([], [new TaskBackup(@"\OmenTask", true, true)], []);
+
+        var task = Assert.Single(store.LoadState().State.Tasks);
+        Assert.True(task.OriginalEnabled);
+        Assert.True(task.OriginalRunning);
     }
 }

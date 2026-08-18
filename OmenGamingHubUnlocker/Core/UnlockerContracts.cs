@@ -22,6 +22,7 @@ public interface IUnlockerOperations
     IReadOnlyList<OperationLine> StartServices(IEnumerable<string> serviceNames, bool dryRun);
     IReadOnlyList<OperationLine> SetTaskEnabledStates(IEnumerable<TaskEnableTarget> targets, bool dryRun);
     IReadOnlyList<OperationLine> StopTasks(IEnumerable<string> taskPaths, bool dryRun);
+    IReadOnlyList<OperationLine> StartTasks(IEnumerable<string> taskPaths, bool dryRun);
     IReadOnlyList<OperationLine> RemoveRunEntries(IEnumerable<RunEntry> entries, bool dryRun);
     IReadOnlyList<OperationLine> RestoreRunEntries(IEnumerable<RunEntryBackup> entries, bool dryRun);
     IReadOnlyList<OperationLine> TerminateTargetProcesses(bool dryRun);
@@ -38,6 +39,14 @@ public interface IUnlockerOperations
 public interface IOperationDelay
 {
     void Wait(TimeSpan delay);
+}
+
+/// <summary>
+/// Serializes machine-wide mutations across processes and Windows sessions.
+/// </summary>
+public interface IOperationLock
+{
+    bool TryAcquire(out IDisposable? lease, out string failureDetails);
 }
 
 public sealed class ThreadOperationDelay : IOperationDelay

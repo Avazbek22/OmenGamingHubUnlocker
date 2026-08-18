@@ -159,7 +159,8 @@ public sealed class UnlockerStatusService(IUnlockerOperations operations)
                         status.PackageRulePresent ? Text.Get("state.true") : Text.Get("state.false"),
                         status.Targets.DiscoveryComplete
                             ? Text.Get("state.complete")
-                            : Text.Get("state.incomplete"))
+                            : Text.Get("state.incomplete"),
+                        status.EnforcementActive ? Text.Get("state.true") : Text.Get("state.false"))
                     : status.Error,
                 Expected = "Current package and executable paths blocked",
                 Result = !status.QuerySucceeded ? "ERR" : status.IsComplete ? "OK" : "WARN"
@@ -248,10 +249,12 @@ public sealed class UnlockerStatusService(IUnlockerOperations operations)
                     Area = "Tasks",
                     Item = backup.Path,
                     Current = exists
-                        ? task!.Enabled ? "Enabled" : "Disabled"
+                        ? $"{(task!.Enabled ? "Enabled" : "Disabled")}, {task.State}"
                         : Text.Get("state.notInstalled"),
                     Expected = backup.OriginalEnabled ? "Enabled" : "Disabled",
-                    Result = !exists ? "INFO" : task!.Enabled == backup.OriginalEnabled ? "OK" : "ERR"
+                    Result = !exists
+                        ? "INFO"
+                        : task!.Enabled == backup.OriginalEnabled ? "OK" : "ERR"
                 });
             }
         }

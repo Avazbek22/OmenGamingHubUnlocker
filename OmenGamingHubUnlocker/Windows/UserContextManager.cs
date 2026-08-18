@@ -7,12 +7,16 @@ public sealed record UserContextStatus(
     bool InspectionSucceeded,
     string ProcessIdentity,
     string InteractiveIdentity,
-    string Error)
+    string Error,
+    string ProcessSid = "",
+    string InteractiveSid = "")
 {
     public bool IsSafe =>
         InspectionSucceeded &&
-        !string.IsNullOrWhiteSpace(ProcessIdentity) &&
-        ProcessIdentity.Equals(InteractiveIdentity, StringComparison.OrdinalIgnoreCase);
+        (!string.IsNullOrWhiteSpace(ProcessSid) && !string.IsNullOrWhiteSpace(InteractiveSid)
+            ? ProcessSid.Equals(InteractiveSid, StringComparison.OrdinalIgnoreCase)
+            : !string.IsNullOrWhiteSpace(ProcessIdentity) &&
+              ProcessIdentity.Equals(InteractiveIdentity, StringComparison.OrdinalIgnoreCase));
 }
 
 public static class UserContextManager
@@ -21,13 +25,16 @@ public static class UserContextManager
     {
         const string script = """
 $ErrorActionPreference = 'Stop'
-$currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$windowsIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+$currentIdentity = $windowsIdentity.Name
+$currentSid = $windowsIdentity.User.Value
 $sessionId = (Get-Process -Id $PID).SessionId
 $explorer = Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" |
     Where-Object { $_.SessionId -eq $sessionId } |
     Select-Object -First 1
 
 $interactiveIdentity = $null
+$interactiveSid = $null
 if ($null -ne $explorer) {
     $owner = Invoke-CimMethod -InputObject $explorer -MethodName GetOwner
     if ($owner.ReturnValue -eq 0 -and -not [string]::IsNullOrWhiteSpace($owner.User)) {
@@ -37,15 +44,35 @@ if ($null -ne $explorer) {
             "$($owner.Domain)\$($owner.User)"
         }
     }
+
+    try {
+        $ownerSid = Invoke-CimMethod -InputObject $explorer -MethodName GetOwnerSid
+        if ($ownerSid.ReturnValue -eq 0) {
+            $interactiveSid = $ownerSid.Sid
+        }
+    } catch {
+        $interactiveSid = $null
+    }
 }
 
 if ([string]::IsNullOrWhiteSpace($interactiveIdentity)) {
     $interactiveIdentity = (Get-CimInstance Win32_ComputerSystem).UserName
 }
 
+if ([string]::IsNullOrWhiteSpace($interactiveSid) -and -not [string]::IsNullOrWhiteSpace($interactiveIdentity)) {
+    try {
+        $interactiveSid = ([System.Security.Principal.NTAccount]$interactiveIdentity).Translate(
+            [System.Security.Principal.SecurityIdentifier]).Value
+    } catch {
+        $interactiveSid = $null
+    }
+}
+
 [PSCustomObject]@{
     ProcessIdentity = $currentIdentity
     InteractiveIdentity = $interactiveIdentity
+    ProcessSid = $currentSid
+    InteractiveSid = $interactiveSid
 } | ConvertTo-Json -Compress
 """;
 
@@ -57,6 +84,8 @@ if ([string]::IsNullOrWhiteSpace($interactiveIdentity)) {
             using var document = JsonDocument.Parse(output);
             var processIdentity = GetString(document.RootElement, "ProcessIdentity");
             var interactiveIdentity = GetString(document.RootElement, "InteractiveIdentity");
+            var processSid = GetString(document.RootElement, "ProcessSid");
+            var interactiveSid = GetString(document.RootElement, "InteractiveSid");
 
             if (string.IsNullOrWhiteSpace(interactiveIdentity))
             {
@@ -67,7 +96,13 @@ if ([string]::IsNullOrWhiteSpace($interactiveIdentity)) {
                     "The interactive desktop user could not be identified.");
             }
 
-            return new UserContextStatus(true, processIdentity, interactiveIdentity, string.Empty);
+            return new UserContextStatus(
+                true,
+                processIdentity,
+                interactiveIdentity,
+                string.Empty,
+                processSid,
+                interactiveSid);
         }
         catch (Exception exception)
         {

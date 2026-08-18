@@ -56,10 +56,11 @@ public static class ServiceManager
             var delayedAutoStart = serviceObject["DelayedAutoStart"] is bool delayed && delayed;
 
             if (matchEverything ||
-                patterns.Any(pattern =>
+                (patterns.Any(pattern =>
                     WildcardMatcher.IsMatch(serviceName, pattern) ||
                     WildcardMatcher.IsMatch(serviceDisplayName, pattern) ||
-                    WildcardMatcher.IsMatch(servicePath, pattern)))
+                    WildcardMatcher.IsMatch(servicePath, pattern)) &&
+                 OmenIdentity.IsLikelyOmenReference(serviceName, serviceDisplayName, servicePath)))
             {
                 matchingServices.Add(new ServiceItem(
                     serviceName,
@@ -178,7 +179,7 @@ public static class ServiceManager
         };
 
         return PowerShellRunner.TryRun(
-            "sc.exe",
+            WindowsPaths.GetSystemExecutable("sc.exe"),
             $"config \"{target.Name}\" start= {scMode}",
             out _,
             out error,
@@ -288,7 +289,7 @@ public static class ServiceManager
 
             var command = desiredRunning ? "start" : "stop";
             var succeeded = PowerShellRunner.TryRun(
-                "sc.exe",
+                WindowsPaths.GetSystemExecutable("sc.exe"),
                 $"{command} \"{serviceName}\"",
                 out _,
                 out var error,

@@ -40,4 +40,20 @@ public sealed class FileLanguagePreferenceStoreTests
 
         Assert.Equal(AppLanguage.Russian, startupLanguage);
     }
+
+    [Fact]
+    public void Save_ShouldReplacePreferenceWithoutLeavingTemporaryFiles()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var settingsFilePath = Path.Combine(temporaryDirectory.Path, "ui-settings.json");
+        var store = new FileLanguagePreferenceStore(settingsFilePath);
+
+        store.Save(AppLanguage.English);
+        store.Save(AppLanguage.Russian);
+
+        Assert.Equal(AppLanguage.Russian, store.Load());
+        Assert.DoesNotContain(
+            Directory.EnumerateFiles(temporaryDirectory.Path),
+            path => Path.GetFileName(path).StartsWith(".ui-settings.json.", StringComparison.Ordinal));
+    }
 }

@@ -46,7 +46,23 @@ public sealed class FileLanguagePreferenceStore(string? settingsFilePath = null)
 
             var settings = new LanguageSettings(ToLanguageCode(language));
             var json = JsonSerializer.Serialize(settings, SerializerOptions);
-            File.WriteAllText(_settingsFilePath, json);
+            var temporaryPath = Path.Combine(
+                directoryPath,
+                $".{Path.GetFileName(_settingsFilePath)}.{Guid.NewGuid():N}.tmp");
+
+            try
+            {
+                File.WriteAllText(
+                    temporaryPath,
+                    json,
+                    new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                File.Move(temporaryPath, _settingsFilePath, overwrite: true);
+            }
+            finally
+            {
+                if (File.Exists(temporaryPath))
+                    File.Delete(temporaryPath);
+            }
         }
         catch
         {

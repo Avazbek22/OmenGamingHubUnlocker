@@ -10,9 +10,12 @@ public sealed record ServiceBackup(
     bool OriginalDelayedAutoStart = false);
 
 /// <summary>
-/// Stores the original enabled flag of a scheduled task.
+/// Stores the original enabled and runtime state of a scheduled task.
 /// </summary>
-public sealed record TaskBackup(string Path, bool OriginalEnabled);
+public sealed record TaskBackup(
+    string Path,
+    bool OriginalEnabled,
+    bool OriginalRunning = false);
 
 /// <summary>
 /// Stores the original value of a Run entry together with its registry location.
@@ -30,9 +33,15 @@ public sealed record RunEntryBackup(
 public sealed class UnlockerState
 {
     public int SchemaVersion { get; set; } = UnlockerStateStore.CurrentSchemaVersion;
+    public string OwnerUserSid { get; set; } = string.Empty;
+    public bool ActivationRecorded { get; set; }
     public List<ServiceBackup> Services { get; init; } = [];
     public List<TaskBackup> Tasks { get; init; } = [];
     public List<RunEntryBackup> RunEntries { get; init; } = [];
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasRollbackRecord =>
+        ActivationRecorded || Services.Count > 0 || Tasks.Count > 0 || RunEntries.Count > 0;
 }
 
 /// <summary>
@@ -40,7 +49,7 @@ public sealed class UnlockerState
 /// </summary>
 public sealed class UnlockerStateStore : IUnlockerStateStore
 {
-    public const int CurrentSchemaVersion = 4;
+    public const int CurrentSchemaVersion = 5;
     private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan LockRetryDelay = TimeSpan.FromMilliseconds(50);
 
@@ -51,9 +60,14 @@ public sealed class UnlockerStateStore : IUnlockerStateStore
 
     private readonly string _stateFilePath;
     private readonly string _lockFilePath;
+    private readonly string _currentUserSid;
 
-    public UnlockerStateStore(string? stateFilePath = null)
+    public UnlockerStateStore(string? stateFilePath = null, string? currentUserSid = null)
     {
+        _currentUserSid = string.IsNullOrWhiteSpace(currentUserSid)
+            ? ResolveCurrentUserSid()
+            : currentUserSid.Trim();
+
         if (!string.IsNullOrWhiteSpace(stateFilePath))
         {
             _stateFilePath = stateFilePath;
@@ -87,7 +101,12 @@ public sealed class UnlockerStateStore : IUnlockerStateStore
         try
         {
             if (!File.Exists(_stateFilePath))
-                return StateLoadResult.Loaded(new UnlockerState());
+            {
+                return StateLoadResult.Loaded(new UnlockerState
+                {
+                    OwnerUserSid = _currentUserSid
+                });
+            }
 
             var json = File.ReadAllText(_stateFilePath);
             var state = JsonSerializer.Deserialize<UnlockerState>(json, SerializerOptions);
@@ -99,6 +118,19 @@ public sealed class UnlockerStateStore : IUnlockerStateStore
                 return StateLoadResult.Failed(
                     $"Rollback schema {state.SchemaVersion} is newer than supported schema {CurrentSchemaVersion}.");
             }
+
+            if (!string.IsNullOrWhiteSpace(state.OwnerUserSid) &&
+                !state.OwnerUserSid.Equals(_currentUserSid, StringComparison.OrdinalIgnoreCase))
+            {
+                return StateLoadResult.Failed(
+                    $"The rollback state belongs to Windows user {state.OwnerUserSid}, not {_currentUserSid}.");
+            }
+
+            // Legacy state did not contain an owner SID or an explicit activation marker.
+            state.ActivationRecorded |= state.Services.Count > 0 ||
+                                        state.Tasks.Count > 0 ||
+                                        state.RunEntries.Count > 0;
+            state.OwnerUserSid = _currentUserSid;
 
             state.SchemaVersion = CurrentSchemaVersion;
             return StateLoadResult.Loaded(state);
@@ -120,6 +152,8 @@ public sealed class UnlockerStateStore : IUnlockerStateStore
             throw new InvalidOperationException($"Cannot read the existing rollback state: {loadResult.Error}");
 
         var currentState = loadResult.State;
+        currentState.OwnerUserSid = _currentUserSid;
+        currentState.ActivationRecorded = true;
 
         MergeServices(currentState.Services, serviceBackups);
         MergeTasks(currentState.Tasks, taskBackups);
@@ -133,6 +167,13 @@ public sealed class UnlockerStateStore : IUnlockerStateStore
         try
         {
             using var stateLock = AcquireStateLock();
+            var loadResult = LoadStateWithoutLock();
+            if (!loadResult.Success)
+            {
+                failureDetails = loadResult.Error;
+                return false;
+            }
+
             if (File.Exists(_stateFilePath))
                 File.Delete(_stateFilePath);
 
@@ -259,4 +300,11 @@ public sealed class UnlockerStateStore : IUnlockerStateStore
 
     private static string BuildRunEntryIdentity(RunEntryBackup backup)
         => $"{backup.Hive}|{backup.View}|{backup.Name}";
+
+    private static string ResolveCurrentUserSid()
+    {
+        using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+        return identity.User?.Value ??
+               throw new InvalidOperationException("The current Windows user SID is unavailable.");
+    }
 }

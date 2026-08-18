@@ -116,6 +116,23 @@ public sealed class FirewallProtectionStatusTests
         Assert.False(status.IsComplete);
     }
 
+    [Fact]
+    public void IsComplete_ShouldRejectRulesWhenFirewallEnforcementIsInactive()
+    {
+        var status = new FirewallProtectionStatus(
+            true,
+            CreateTargets(),
+            [],
+            [],
+            [],
+            true,
+            "Windows Firewall is disabled",
+            EnforcementActive: false,
+            EnforcementDetails: "Public");
+
+        Assert.False(status.IsComplete);
+    }
+
     private static FirewallTargetSet CreateTargets(string packageSid = PackageSid)
         => new(
             new AppxPackageInfo("Omen", "Omen_family", "Omen_2", @"C:\WindowsApps\Omen\v2"),
