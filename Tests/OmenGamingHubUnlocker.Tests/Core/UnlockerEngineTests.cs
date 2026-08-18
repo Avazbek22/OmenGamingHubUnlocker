@@ -251,6 +251,158 @@ public sealed class UnlockerEngineTests
     }
 
     [Fact]
+    public void Reset_ShouldWaitForACompleteStableExecutableSet()
+    {
+        var (engine, operations, _, delay) = CreateEngineWithActiveOmen();
+        operations.OnReset = platform =>
+        {
+            platform.Package = platform.Package! with
+            {
+                PackageFullName = "AD2F1837.OMENCommandCenter_2.0.0.0_x64__test",
+                InstallLocation = @"C:\Program Files\WindowsApps\Omen\v2"
+            };
+            ReplaceExecutables(platform, 5);
+            platform.TargetDiscoverySteps.Enqueue(_ => { });
+            platform.TargetDiscoverySteps.Enqueue(current => ReplaceExecutables(current, 33));
+            platform.TargetDiscoverySteps.Enqueue(_ => { });
+        };
+
+        var report = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
+
+        Assert.True(report.Success);
+        Assert.Equal(33, operations.Firewall.Targets.AllExecutables.Count);
+        Assert.Equal(5, delay.WaitCount);
+        Assert.True(operations.FirewallCleanupRequests.Last());
+        Assert.DoesNotContain(report.Lines, line => line.Level == "ERR");
+    }
+
+    [Fact]
+    public void Reset_ShouldWaitForThePackageToBeRegisteredAgain()
+    {
+        var (engine, operations, _, delay) = CreateEngineWithActiveOmen();
+        var restoredPackage = operations.Package! with
+        {
+            PackageFullName = "AD2F1837.OMENCommandCenter_2.0.0.0_x64__test",
+            InstallLocation = @"C:\Program Files\WindowsApps\Omen\v2"
+        };
+        operations.OnReset = platform =>
+        {
+            platform.Package = null;
+            platform.Executables.Clear();
+            platform.TargetDiscoverySteps.Enqueue(_ => { });
+            platform.TargetDiscoverySteps.Enqueue(current =>
+            {
+                current.Package = restoredPackage;
+                current.Executables.Add(@"C:\Program Files\WindowsApps\Omen\v2\Omen.exe");
+            });
+            platform.TargetDiscoverySteps.Enqueue(_ => { });
+        };
+
+        var report = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
+
+        Assert.True(report.Success);
+        Assert.Equal(restoredPackage, operations.Firewall.Targets.Package);
+        Assert.Equal(5, delay.WaitCount);
+    }
+
+    [Fact]
+    public void Reset_ShouldRetryWhenAnExecutableAppearsDuringStabilization()
+    {
+        var (engine, operations, _, delay) = CreateEngineWithActiveOmen();
+        const string lateExecutable = @"C:\Program Files\WindowsApps\Omen\v2\LateBackground.exe";
+        operations.OnReset = platform =>
+        {
+            platform.Package = platform.Package! with
+            {
+                PackageFullName = "AD2F1837.OMENCommandCenter_2.0.0.0_x64__test",
+                InstallLocation = @"C:\Program Files\WindowsApps\Omen\v2"
+            };
+            platform.Executables.Clear();
+            platform.Executables.Add(@"C:\Program Files\WindowsApps\Omen\v2\Omen.exe");
+            platform.FirewallInspectionSteps.Enqueue(_ => { });
+            platform.FirewallInspectionSteps.Enqueue(current =>
+            {
+                current.Executables.Add(lateExecutable);
+                current.Firewall = current.BuildFirewallStatus(isComplete: false);
+            });
+        };
+
+        var report = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
+
+        Assert.True(report.Success);
+        Assert.Contains(lateExecutable, operations.Firewall.Targets.AllExecutables);
+        Assert.Equal(5, delay.WaitCount);
+        Assert.DoesNotContain(report.Lines, line =>
+            line.Level == "ERR" &&
+            line.Text.Contains("firewall", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Reset_ShouldRecoverFromATransientFirewallMutationFailure()
+    {
+        var (engine, operations, _, _) = CreateEngineWithActiveOmen();
+        operations.OnReset = platform => platform.FirewallActivationFailuresRemaining = 1;
+
+        var report = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
+
+        Assert.True(report.Success);
+        Assert.True(operations.Firewall.IsComplete);
+        Assert.Equal(0, operations.FirewallActivationFailuresRemaining);
+        Assert.DoesNotContain(report.Lines, line => line.Level == "ERR");
+    }
+
+    [Fact]
+    public void Reset_ShouldStopAfterBoundedRetriesWhenFirewallMutationKeepsFailing()
+    {
+        var (engine, operations, _, delay) = CreateEngineWithActiveOmen();
+        operations.OnReset = platform => platform.FailFirewallActivation = true;
+
+        var report = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
+
+        Assert.False(report.Success);
+        Assert.Equal(10, delay.WaitCount);
+        Assert.DoesNotContain(true, operations.FirewallCleanupRequests);
+        Assert.Contains(report.Lines, line => line.Level == "ERR");
+    }
+
+    [Fact]
+    public void Reset_ShouldRetryTransientStaleRuleCleanupFailure()
+    {
+        var (engine, operations, _, delay) = CreateEngineWithActiveOmen();
+        operations.OnReset = platform => platform.FirewallCleanupFailuresRemaining = 1;
+
+        var report = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
+
+        Assert.True(report.Success);
+        Assert.Equal(7, delay.WaitCount);
+        Assert.Equal(0, operations.FirewallCleanupFailuresRemaining);
+        Assert.Equal(2, operations.FirewallCleanupRequests.Count(requested => requested));
+        Assert.DoesNotContain(report.Lines, line => line.Level == "ERR");
+    }
+
+    [Fact]
+    public void Reset_ShouldFailSafelyWhenPackageDiscoveryNeverCompletes()
+    {
+        var (engine, operations, _, delay) = CreateEngineWithActiveOmen();
+        operations.OnReset = platform =>
+        {
+            platform.PackageDirectoryReady = false;
+            platform.FirewallDiscoveryErrors = ["package directory is still being restored"];
+            platform.Processes.Add(new ProcessItem(20, "NewBackground", platform.Executables[0]));
+        };
+
+        var report = engine.ResetAndReapply(UnlockerOptions.ForResetAndReapply());
+
+        Assert.False(report.Success);
+        Assert.Equal(23, delay.WaitCount);
+        Assert.NotEmpty(operations.Processes);
+        Assert.DoesNotContain(true, operations.FirewallCleanupRequests);
+        Assert.Contains(report.Lines, line =>
+            line.Level == "ERR" &&
+            line.Text.Contains("firewall", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void Disable_ShouldRestoreExactStateBeforeRemovingNetworkProtection()
     {
         var operations = CreateTamedOperations();
@@ -372,6 +524,21 @@ public sealed class UnlockerEngineTests
         Assert.Contains("stale=1", firewall.Current);
     }
 
+    [Fact]
+    public void Status_ShouldWarnWhenExecutableDiscoveryIsIncomplete()
+    {
+        var operations = CreateTamedOperations();
+        operations.PackageDirectoryReady = false;
+        operations.FirewallDiscoveryErrors = ["package directory unavailable"];
+        operations.Firewall = operations.BuildFirewallStatus(isComplete: true);
+        var engine = new UnlockerEngine(operations, new InMemoryStateStore(), new RecordingDelay());
+
+        var report = engine.GetStatusReport();
+
+        var firewall = Assert.Single(report.Snapshots, snapshot => snapshot.Area == "Firewall");
+        Assert.Equal("WARN", firewall.Result);
+    }
+
     private static (
         UnlockerEngine Engine,
         FakeUnlockerOperations Operations,
@@ -412,5 +579,12 @@ public sealed class UnlockerEngineTests
         Assert.True(firstIndex >= 0, $"Call '{first}' was not recorded.");
         Assert.True(secondIndex >= 0, $"Call '{second}' was not recorded.");
         Assert.True(firstIndex < secondIndex, $"Expected '{first}' before '{second}'.");
+    }
+
+    private static void ReplaceExecutables(FakeUnlockerOperations operations, int count)
+    {
+        operations.Executables.Clear();
+        operations.Executables.AddRange(Enumerable.Range(1, count).Select(index =>
+            $@"C:\Program Files\WindowsApps\Omen\v2\Component{index:D2}.exe"));
     }
 }

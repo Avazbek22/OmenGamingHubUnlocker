@@ -5,6 +5,8 @@ namespace OmenGamingHubUnlocker.Windows;
 /// </summary>
 public static class PowerShellRunner
 {
+    private const int PostTerminationWaitMilliseconds = 5_000;
+
     public static (bool ok, string details) CheckAvailability()
     {
         var systemPowerShellPath = Path.Combine(
@@ -50,21 +52,6 @@ public static class PowerShellRunner
                 EnableRaisingEvents = true
             };
 
-            var outputBuilder = new StringBuilder();
-            var errorBuilder = new StringBuilder();
-
-            process.OutputDataReceived += (_, eventArgs) =>
-            {
-                if (eventArgs.Data is not null)
-                    outputBuilder.AppendLine(eventArgs.Data);
-            };
-
-            process.ErrorDataReceived += (_, eventArgs) =>
-            {
-                if (eventArgs.Data is not null)
-                    errorBuilder.AppendLine(eventArgs.Data);
-            };
-
             if (!process.Start())
             {
                 standardOutput = string.Empty;
@@ -72,23 +59,28 @@ public static class PowerShellRunner
                 return false;
             }
 
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
 
             if (!process.WaitForExit(timeoutMs))
             {
                 TryKillProcess(process);
-                process.WaitForExit();
+                process.WaitForExit(PostTerminationWaitMilliseconds);
 
-                standardOutput = outputBuilder.ToString().TrimEnd();
+                standardOutput = ReadCompletedOutput(outputTask);
                 standardError = Text.Format("manager.powershell.timeout", timeoutMs);
                 return false;
             }
 
-            process.WaitForExit();
+            if (!Task.WaitAll([outputTask, errorTask], PostTerminationWaitMilliseconds))
+            {
+                standardOutput = ReadCompletedOutput(outputTask);
+                standardError = Text.Get("manager.powershell.outputDrainTimeout");
+                return false;
+            }
 
-            standardOutput = outputBuilder.ToString().TrimEnd();
-            standardError = errorBuilder.ToString().TrimEnd();
+            standardOutput = outputTask.GetAwaiter().GetResult().TrimEnd();
+            standardError = errorTask.GetAwaiter().GetResult().TrimEnd();
             return process.ExitCode == 0;
         }
         catch (Exception exception)
@@ -129,4 +121,9 @@ public static class PowerShellRunner
             // The best-effort timeout path should never hide the original timeout reason.
         }
     }
+
+    private static string ReadCompletedOutput(Task<string> outputTask)
+        => outputTask.IsCompletedSuccessfully
+            ? outputTask.GetAwaiter().GetResult().TrimEnd()
+            : string.Empty;
 }

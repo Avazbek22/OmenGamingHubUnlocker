@@ -156,7 +156,10 @@ public sealed class UnlockerStatusService(IUnlockerOperations operations)
                         status.RuleCount,
                         status.MissingExecutableRules.Count,
                         status.StaleExecutableRules.Count,
-                        status.PackageRulePresent ? Text.Get("state.true") : Text.Get("state.false"))
+                        status.PackageRulePresent ? Text.Get("state.true") : Text.Get("state.false"),
+                        status.Targets.DiscoveryComplete
+                            ? Text.Get("state.complete")
+                            : Text.Get("state.incomplete"))
                     : status.Error,
                 Expected = "Current package and executable paths blocked",
                 Result = !status.QuerySucceeded ? "ERR" : status.IsComplete ? "OK" : "WARN"

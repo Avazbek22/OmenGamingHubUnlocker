@@ -12,6 +12,12 @@ public static class ConsoleActivityIndicator
         string message,
         Func<T> operation,
         ITaskbarProgressService? taskbarProgress = null)
+        => Run(message, _ => operation(), taskbarProgress);
+
+    public static T Run<T>(
+        string message,
+        Func<IProgress<string>, T> operation,
+        ITaskbarProgressService? taskbarProgress = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
         ArgumentNullException.ThrowIfNull(operation);
@@ -21,11 +27,30 @@ public static class ConsoleActivityIndicator
         if (Console.IsOutputRedirected)
         {
             ConsoleHelpers.WriteInfo($"{message}...");
-            return operation();
+            var lastMessage = message;
+            var redirectedProgress = new InlineProgress(stage =>
+            {
+                if (string.IsNullOrWhiteSpace(stage) ||
+                    stage.Equals(lastMessage, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                lastMessage = stage;
+                ConsoleHelpers.WriteInfo($"{stage}...");
+            });
+            return operation(redirectedProgress);
         }
 
         using var cursorVisibility = ConsoleHelpers.HideCursorForAnimation();
-        var operationTask = Task.Run(operation);
+        var currentMessage = message;
+        var progress = new InlineProgress(stage =>
+        {
+            if (!string.IsNullOrWhiteSpace(stage))
+                Volatile.Write(ref currentMessage, stage);
+        });
+        var operationTask = Task.Run(() => operation(progress));
+        var stopwatch = Stopwatch.StartNew();
         var frameIndex = 0;
         var renderedLength = 0;
 
@@ -33,7 +58,11 @@ public static class ConsoleActivityIndicator
         {
             do
             {
-                renderedLength = RenderFrame(message, Frames[frameIndex], renderedLength);
+                renderedLength = RenderFrame(
+                    Volatile.Read(ref currentMessage),
+                    Frames[frameIndex],
+                    stopwatch.Elapsed,
+                    renderedLength);
                 frameIndex = (frameIndex + 1) % Frames.Length;
                 Thread.Sleep(FrameDelayMilliseconds);
             }
@@ -47,9 +76,13 @@ public static class ConsoleActivityIndicator
         }
     }
 
-    private static int RenderFrame(string message, string frame, int previousLength)
+    private static int RenderFrame(
+        string message,
+        string frame,
+        TimeSpan elapsed,
+        int previousLength)
     {
-        var text = message + frame;
+        var text = $"{message}{frame} [{elapsed:mm\\:ss}]";
         var padding = Math.Max(0, previousLength - text.Length);
 
         Console.Write('\r');
@@ -81,5 +114,10 @@ public static class ConsoleActivityIndicator
             // Optional taskbar feedback must not affect the underlying operation.
             return null;
         }
+    }
+
+    private sealed class InlineProgress(Action<string> report) : IProgress<string>
+    {
+        public void Report(string value) => report(value);
     }
 }

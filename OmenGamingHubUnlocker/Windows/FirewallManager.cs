@@ -15,11 +15,19 @@ public sealed record FirewallTargetSet(
     string PackageSid,
     string PackageSidError,
     IReadOnlySet<string> PackageExecutables,
-    IReadOnlySet<string> ExternalExecutables)
+    IReadOnlySet<string> ExternalExecutables,
+    bool PackageDirectoryReady = true,
+    IReadOnlyList<string>? DiscoveryErrors = null)
 {
     public IReadOnlySet<string> AllExecutables { get; } = PackageExecutables
         .Concat(ExternalExecutables)
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    public IReadOnlyList<string> ScanErrors { get; } = DiscoveryErrors ?? [];
+
+    public bool DiscoveryComplete =>
+        (Package is null || PackageDirectoryReady) &&
+        ScanErrors.Count == 0;
 }
 
 /// <summary>
@@ -40,6 +48,7 @@ public sealed record FirewallProtectionStatus(
 
     public bool IsComplete =>
         QuerySucceeded &&
+        Targets.DiscoveryComplete &&
         HasProtectionIdentity &&
         MissingExecutableRules.Count == 0 &&
         (!PackageRuleRequired || PackageRulePresent);
@@ -70,17 +79,35 @@ public static class FirewallManager
     {
         var packageExecutables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var externalExecutables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var discoveryErrors = new List<string>();
         var package = AppxPackageManager.QueryPackages(OmenTargets.AppxFilters).FirstOrDefault();
+        var packageDirectoryReady = true;
 
         if (package is not null)
-            TryScanExecutables(package.InstallLocation, packageExecutables);
+        {
+            packageDirectoryReady = ScanExecutables(
+                package.InstallLocation,
+                packageExecutables,
+                discoveryErrors,
+                requireDirectory: true);
+        }
 
         foreach (var relativeDirectory in OmenTargets.ExtraExeDirsRelative)
         {
-            TryScanExecutables(Path.Combine(WindowsPaths.ProgramFiles, relativeDirectory), externalExecutables);
+            ScanExecutables(
+                Path.Combine(WindowsPaths.ProgramFiles, relativeDirectory),
+                externalExecutables,
+                discoveryErrors,
+                requireDirectory: false);
 
             if (!string.Equals(WindowsPaths.ProgramFiles, WindowsPaths.ProgramFilesX86, StringComparison.OrdinalIgnoreCase))
-                TryScanExecutables(Path.Combine(WindowsPaths.ProgramFilesX86, relativeDirectory), externalExecutables);
+            {
+                ScanExecutables(
+                    Path.Combine(WindowsPaths.ProgramFilesX86, relativeDirectory),
+                    externalExecutables,
+                    discoveryErrors,
+                    requireDirectory: false);
+            }
         }
 
         var packageSid = string.Empty;
@@ -93,7 +120,9 @@ public static class FirewallManager
             packageSid,
             packageSidError,
             packageExecutables,
-            externalExecutables);
+            externalExecutables,
+            packageDirectoryReady,
+            discoveryErrors);
     }
 
     public static FirewallProtectionStatus InspectProtection(string prefix)
@@ -146,7 +175,10 @@ public static class FirewallManager
             string.Empty);
     }
 
-    public static List<OperationLine> ActivateFirewallBlock(string prefix, bool dryRun)
+    public static List<OperationLine> ActivateFirewallBlock(
+        string prefix,
+        bool dryRun,
+        bool removeStaleRules = false)
     {
         var lines = new List<OperationLine>();
         var targets = DiscoverTargets();
@@ -170,20 +202,31 @@ public static class FirewallManager
                 targets.PackageSidError));
         }
 
-        // Keep the stable package rule active while obsolete executable rules are replaced.
-        lines.AddRange(RemoveRulesByPrefix(
-            prefix,
-            dryRun,
-            new HashSet<string>([packageRuleName], StringComparer.OrdinalIgnoreCase)));
+        var query = QueryManagedRules(prefix);
+        if (!query.Success)
+        {
+            lines.Add(LocalizedLine.Err("manager.firewall.verificationFailed", query.Error));
+            return lines;
+        }
+
+        var desiredRuleNames = new HashSet<string>([packageRuleName], StringComparer.OrdinalIgnoreCase);
 
         foreach (var executablePath in targets.AllExecutables.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
         {
             var ruleName = BuildProgramRuleName(prefix, executablePath);
+            desiredRuleNames.Add(ruleName);
+
+            if (HasCurrentProgramRule(query.Rules, ruleName, executablePath))
+                continue;
+
             if (dryRun)
             {
                 lines.Add(LocalizedLine.Ok("manager.firewall.wouldBlockOutbound", executablePath));
                 continue;
             }
+
+            if (query.Rules.Any(rule => rule.Name.Equals(ruleName, StringComparison.OrdinalIgnoreCase)))
+                lines.AddRange(RemoveRulesByExactName(ruleName));
 
             if (TryAddProgramRuleCom(ruleName, executablePath, out var comError) ||
                 TryAddProgramRulePowerShell(ruleName, executablePath, out var powerShellError))
@@ -198,6 +241,12 @@ public static class FirewallManager
                 comError,
                 powerShellError));
         }
+
+        // Existing rules remain active until target discovery is stable, preventing an update-time protection gap.
+        if (removeStaleRules && targets.DiscoveryComplete)
+            lines.AddRange(RemoveRulesByPrefix(prefix, dryRun, desiredRuleNames));
+        else if (removeStaleRules)
+            lines.Add(LocalizedLine.Info("manager.firewall.staleCleanupDeferred"));
 
         if (!dryRun)
             AppendActivationVerification(lines, prefix);
@@ -230,6 +279,9 @@ public static class FirewallManager
         bool dryRun)
     {
         var query = QueryManagedRules(prefix);
+        if (!query.Success)
+            return [LocalizedLine.Err("manager.firewall.verificationFailed", query.Error)];
+
         var matchingRule = query.Rules.FirstOrDefault(rule =>
             rule.Name.Equals(ruleName, StringComparison.OrdinalIgnoreCase) &&
             rule.Enabled &&
@@ -322,9 +374,16 @@ Get-NetFirewallRule -DisplayName '{escapedName}' -ErrorAction SilentlyContinue |
             return;
         }
 
+        if (!status.Targets.DiscoveryComplete)
+        {
+            lines.Add(LocalizedLine.Info(
+                "manager.firewall.discoveryIncomplete",
+                status.Targets.ScanErrors.Count));
+        }
+
         if (status.MissingExecutableRules.Count > 0)
         {
-            lines.Add(LocalizedLine.Err(
+            lines.Add(LocalizedLine.Info(
                 "manager.firewall.missingProgramRules",
                 status.MissingExecutableRules.Count));
         }
@@ -334,6 +393,23 @@ Get-NetFirewallRule -DisplayName '{escapedName}' -ErrorAction SilentlyContinue |
 
         if (status.IsComplete)
             lines.Add(LocalizedLine.Ok("manager.firewall.verificationPassed", status.RuleCount));
+    }
+
+    private static bool HasCurrentProgramRule(
+        IEnumerable<FirewallRuleInfo> rules,
+        string ruleName,
+        string executablePath)
+    {
+        var normalizedExecutablePath = NormalizePath(executablePath);
+        return normalizedExecutablePath is not null && rules.Any(rule =>
+            rule.Name.Equals(ruleName, StringComparison.OrdinalIgnoreCase) &&
+            rule.Enabled &&
+            rule.IsOutbound &&
+            rule.IsBlock &&
+            string.Equals(
+                NormalizePath(rule.ProgramPath),
+                normalizedExecutablePath,
+                StringComparison.OrdinalIgnoreCase));
     }
 
     private static FirewallRuleQuery QueryManagedRules(string prefix)
@@ -555,19 +631,26 @@ New-NetFirewallRule -DisplayName '{EscapePowerShellLiteral(ruleName)}' `
         }
     }
 
-    private static void TryScanExecutables(string directoryPath, HashSet<string> destination)
+    private static bool ScanExecutables(
+        string directoryPath,
+        HashSet<string> destination,
+        List<string> discoveryErrors,
+        bool requireDirectory)
     {
         try
         {
             if (!Directory.Exists(directoryPath))
-                return;
+                return !requireDirectory;
 
             foreach (var executablePath in Directory.EnumerateFiles(directoryPath, "*.exe", SearchOption.AllDirectories))
                 destination.Add(Path.GetFullPath(executablePath));
+
+            return true;
         }
-        catch
+        catch (Exception exception)
         {
-            // Other locations remain useful when a directory has a transient ACL or update race.
+            discoveryErrors.Add($"{directoryPath}: {exception.Message}");
+            return false;
         }
     }
 

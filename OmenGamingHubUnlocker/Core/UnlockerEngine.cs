@@ -6,9 +6,10 @@ namespace OmenGamingHubUnlocker.Core;
 public sealed class UnlockerEngine
 {
     private const int StabilizationAttempts = 8;
+    private const int PostResetDiscoveryAttempts = 15;
     private const int RequiredStableSnapshots = 2;
     private static readonly TimeSpan StabilizationDelay = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan PostResetDelay = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan PostResetDiscoveryDelay = TimeSpan.FromSeconds(2);
 
     private readonly IUnlockerOperations _operations;
     private readonly IUnlockerStateStore _stateStore;
@@ -118,54 +119,57 @@ public sealed class UnlockerEngine
             return report;
         }
 
-        var activationStarted = ApplyTamedState(report, options, saveRollback: true);
+        var activationResult = ApplyTamedState(report, options, saveRollback: true);
 
-        if (activationStarted && !options.DryRun)
+        if (activationResult == ApplyTamedStateResult.Applied && !options.DryRun)
             StabilizeTamedState(report, options);
 
         CompleteTamedReport(report, options, Text.Get("engine.title.activationFailed"));
         return report;
     }
 
-    public OperationReport ResetAndReapply(UnlockerOptions options)
+    public OperationReport ResetAndReapply(
+        UnlockerOptions options,
+        IProgress<string>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(options);
 
         var report = OperationReport.Ok(Text.Get("engine.title.resetCompleted"));
         report.Lines.Add(LocalizedLine.Info("engine.resetStarted"));
+        progress?.Report(Text.Get("activity.reset.preparing"));
         if (!ValidateUserContext(report, options))
         {
             CompleteReport(report, Text.Get("engine.title.resetFailed"));
             return report;
         }
 
-        if (!ApplyTamedState(report, options, saveRollback: true))
+        if (ApplyTamedState(report, options, saveRollback: true) != ApplyTamedStateResult.Applied)
         {
             CompleteTamedReport(report, options, Text.Get("engine.title.resetFailed"));
             return report;
         }
 
-        if (!options.DryRun && !IsNetworkProtectionComplete(options, report))
-        {
-            report.Lines.Add(LocalizedLine.Err("engine.resetAbortedProtection"));
-            CompleteTamedReport(report, options, Text.Get("engine.title.resetFailed"));
-            return report;
-        }
-
+        progress?.Report(Text.Get("activity.reset.executing"));
         AddOperationLines(report, () => _operations.ResetPackage(options.DryRun), "engine.resetUnexpectedFailure");
 
         if (!options.DryRun)
         {
-            _delay.Wait(PostResetDelay);
             report.Lines.Add(LocalizedLine.Info("engine.postResetDiscovery"));
+            WaitForStablePostResetTargets(progress);
         }
 
         // Reset can recreate package registrations and background activity, so all targets are rediscovered.
-        var reapplicationStarted = ApplyTamedState(report, options, saveRollback: true);
+        progress?.Report(Text.Get("activity.reset.reapplying"));
+        var reapplicationResult = ApplyTamedState(
+            report,
+            options,
+            saveRollback: true,
+            NetworkVerificationMode.Retryable);
 
-        if (reapplicationStarted && !options.DryRun)
-            StabilizeTamedState(report, options);
+        if (reapplicationResult != ApplyTamedStateResult.Failed && !options.DryRun)
+            StabilizeTamedState(report, options, progress);
 
+        progress?.Report(Text.Get("activity.reset.verifying"));
         CompleteTamedReport(report, options, Text.Get("engine.title.resetFailed"));
         return report;
     }
@@ -228,25 +232,65 @@ public sealed class UnlockerEngine
         return report;
     }
 
-    private bool ApplyTamedState(OperationReport report, UnlockerOptions options, bool saveRollback)
+    private ApplyTamedStateResult ApplyTamedState(
+        OperationReport report,
+        UnlockerOptions options,
+        bool saveRollback,
+        NetworkVerificationMode networkVerificationMode = NetworkVerificationMode.Required,
+        bool removeStaleFirewallRules = false)
     {
         var errorsBeforeDiscovery = CountErrors(report);
         var plan = CollectActivationPlan(report);
         if (CountErrors(report) > errorsBeforeDiscovery)
-            return false;
+            return ApplyTamedStateResult.Failed;
 
         if (saveRollback && !SaveActivationBackups(plan, options, report))
-            return false;
+            return ApplyTamedStateResult.Failed;
 
         // Network isolation is intentionally first so later reset or process races cannot call home.
+        var errorsBeforeNetworkMutation = CountErrors(report);
+        var retryNetworkFailures = networkVerificationMode == NetworkVerificationMode.Retryable;
+        var networkMutationSucceeded = true;
         if (options.ManageFirewall)
-            AddOperationLines(report, () => _operations.ActivateFirewall(options.DryRun), "engine.firewallStepFailed");
+        {
+            var activateFirewall = () =>
+                _operations.ActivateFirewall(options.DryRun, removeStaleFirewallRules);
+            if (retryNetworkFailures)
+            {
+                networkMutationSucceeded &= AddRetryableOperationLines(
+                    report,
+                    activateFirewall);
+            }
+            else
+            {
+                AddOperationLines(report, activateFirewall, "engine.firewallStepFailed");
+            }
+        }
 
         if (options.ManageHosts)
-            AddOperationLines(report, () => _operations.ActivateHosts(options.DryRun), "engine.hostsStepFailed");
+        {
+            var activateHosts = () => _operations.ActivateHosts(options.DryRun);
+            if (retryNetworkFailures)
+                networkMutationSucceeded &= AddRetryableOperationLines(report, activateHosts);
+            else
+                AddOperationLines(report, activateHosts, "engine.hostsStepFailed");
+        }
 
-        if (!options.DryRun && !VerifyNetworkProtectionBeforeMutation(report, options))
-            return false;
+        if (CountErrors(report) > errorsBeforeNetworkMutation)
+            return ApplyTamedStateResult.Failed;
+
+        if (!networkMutationSucceeded)
+            return ApplyTamedStateResult.NetworkIncomplete;
+
+        if (!options.DryRun && !VerifyNetworkProtectionBeforeMutation(
+                report,
+                options,
+                reportIncomplete: networkVerificationMode == NetworkVerificationMode.Required))
+        {
+            return networkVerificationMode == NetworkVerificationMode.Required
+                ? ApplyTamedStateResult.Failed
+                : ApplyTamedStateResult.NetworkIncomplete;
+        }
 
         AddOperationLines(
             report,
@@ -285,15 +329,24 @@ public sealed class UnlockerEngine
             () => _operations.RemoveRunEntries(plan.RunEntriesToRemove, options.DryRun),
             "engine.registryRunStepFailed");
 
-        return true;
+        return CountErrors(report) == errorsBeforeNetworkMutation
+            ? ApplyTamedStateResult.Applied
+            : ApplyTamedStateResult.Failed;
     }
 
-    private void StabilizeTamedState(OperationReport report, UnlockerOptions options)
+    private void StabilizeTamedState(
+        OperationReport report,
+        UnlockerOptions options,
+        IProgress<string>? progress = null)
     {
         var consecutiveStableSnapshots = 0;
 
         for (var attempt = 1; attempt <= StabilizationAttempts; attempt++)
         {
+            progress?.Report(Text.Format(
+                "activity.reset.stabilizing",
+                attempt,
+                StabilizationAttempts));
             _delay.Wait(StabilizationDelay);
             var plan = CollectActivationPlan(report);
             var processes = SafeQuery(
@@ -302,9 +355,9 @@ public sealed class UnlockerEngine
                 report,
                 "engine.processDiscoveryFailed");
             var firewallComplete = !options.ManageFirewall ||
-                                   SafeQueryFirewall(report).IsComplete;
+                                   SafeQueryFirewall(report, reportFailure: false).IsComplete;
             var hostsComplete = !options.ManageHosts ||
-                                SafeQueryHosts(report).AllBlocked;
+                                SafeQueryHosts(report, reportFailure: false).AllBlocked;
             var startupStable =
                 plan.ServicesToConfigure.Count == 0 &&
                 plan.ServicesToStop.Count == 0 &&
@@ -323,7 +376,12 @@ public sealed class UnlockerEngine
                     RequiredStableSnapshots));
 
                 if (consecutiveStableSnapshots >= RequiredStableSnapshots)
-                    return;
+                {
+                    if (FinalizeFirewallReconciliation(report, options))
+                        return;
+
+                    consecutiveStableSnapshots = 0;
+                }
 
                 continue;
             }
@@ -337,12 +395,91 @@ public sealed class UnlockerEngine
                 plan.TasksToDisable.Count + plan.TasksToStop.Count,
                 plan.RunEntriesToRemove.Count));
 
-            if (!ApplyTamedState(report, options, saveRollback: true))
+            var applyResult = ApplyTamedState(
+                report,
+                options,
+                saveRollback: true,
+                NetworkVerificationMode.Retryable);
+            if (applyResult == ApplyTamedStateResult.Failed)
                 return;
         }
 
         report.Lines.Add(LocalizedLine.Err("engine.stabilizationFailed", StabilizationAttempts));
     }
+
+    private bool FinalizeFirewallReconciliation(OperationReport report, UnlockerOptions options)
+    {
+        if (!options.ManageFirewall)
+            return true;
+
+        var cleanupSucceeded = AddRetryableOperationLines(
+            report,
+            () => _operations.ActivateFirewall(options.DryRun, removeStaleRules: true));
+        if (!cleanupSucceeded)
+            return false;
+
+        var status = SafeQueryFirewall(report, reportFailure: false);
+        return status.IsComplete && status.StaleExecutableRules.Count == 0;
+    }
+
+    private bool WaitForStablePostResetTargets(IProgress<string>? progress)
+    {
+        FirewallTargetSet? previousTargets = null;
+        var consecutiveStableSnapshots = 0;
+
+        for (var attempt = 1; attempt <= PostResetDiscoveryAttempts; attempt++)
+        {
+            progress?.Report(Text.Format(
+                "activity.reset.waitingForFiles",
+                attempt,
+                PostResetDiscoveryAttempts,
+                previousTargets?.AllExecutables.Count ?? 0));
+            _delay.Wait(PostResetDiscoveryDelay);
+
+            FirewallTargetSet targets;
+            try
+            {
+                targets = _operations.DiscoverFirewallTargets();
+            }
+            catch
+            {
+                previousTargets = null;
+                consecutiveStableSnapshots = 0;
+                continue;
+            }
+
+            var ready = targets.Package is not null &&
+                        targets.PackageDirectoryReady &&
+                        targets.DiscoveryComplete &&
+                        targets.PackageExecutables.Count > 0;
+            var unchanged = ready && previousTargets is not null &&
+                            HaveSameFirewallTargets(previousTargets, targets);
+            consecutiveStableSnapshots = unchanged
+                ? consecutiveStableSnapshots + 1
+                : ready ? 1 : 0;
+            previousTargets = targets;
+
+            progress?.Report(Text.Format(
+                "activity.reset.filesFound",
+                targets.AllExecutables.Count,
+                consecutiveStableSnapshots,
+                RequiredStableSnapshots));
+
+            if (consecutiveStableSnapshots >= RequiredStableSnapshots)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool HaveSameFirewallTargets(
+        FirewallTargetSet previous,
+        FirewallTargetSet current)
+        => string.Equals(
+               previous.Package?.PackageFullName,
+               current.Package?.PackageFullName,
+               StringComparison.OrdinalIgnoreCase) &&
+           previous.AllExecutables.SetEquals(current.AllExecutables);
 
     private ActivationPlan CollectActivationPlan(OperationReport report)
     {
@@ -427,16 +564,17 @@ public sealed class UnlockerEngine
 
     private bool VerifyNetworkProtectionBeforeMutation(
         OperationReport report,
-        UnlockerOptions options)
+        UnlockerOptions options,
+        bool reportIncomplete)
     {
         var isComplete = true;
 
         if (options.ManageFirewall)
         {
-            var firewall = SafeQueryFirewall(report);
+            var firewall = SafeQueryFirewall(report, reportIncomplete);
             if (!firewall.IsComplete)
             {
-                if (firewall.QuerySucceeded)
+                if (reportIncomplete && firewall.QuerySucceeded)
                     report.Lines.Add(LocalizedLine.Err("engine.verificationFirewallIncomplete"));
 
                 isComplete = false;
@@ -445,10 +583,10 @@ public sealed class UnlockerEngine
 
         if (options.ManageHosts)
         {
-            var hosts = SafeQueryHosts(report);
+            var hosts = SafeQueryHosts(report, reportIncomplete);
             if (!hosts.AllBlocked)
             {
-                if (hosts.Success)
+                if (reportIncomplete && hosts.Success)
                     report.Lines.Add(LocalizedLine.Err("engine.verificationHostsIncomplete"));
 
                 isComplete = false;
@@ -576,11 +714,19 @@ public sealed class UnlockerEngine
         if (runEntries.Count > 0)
             report.Lines.Add(LocalizedLine.Err("engine.verificationRunEntriesPresent", runEntries.Count));
 
-        if (options.ManageFirewall && !SafeQueryFirewall(report).IsComplete)
-            report.Lines.Add(LocalizedLine.Err("engine.verificationFirewallIncomplete"));
+        if (options.ManageFirewall)
+        {
+            var firewall = SafeQueryFirewall(report);
+            if (firewall.QuerySucceeded && !firewall.IsComplete)
+                AddErrorOnce(report, "engine.verificationFirewallIncomplete");
+        }
 
-        if (options.ManageHosts && !SafeQueryHosts(report).AllBlocked)
-            report.Lines.Add(LocalizedLine.Err("engine.verificationHostsIncomplete"));
+        if (options.ManageHosts)
+        {
+            var hosts = SafeQueryHosts(report);
+            if (hosts.Success && !hosts.AllBlocked)
+                AddErrorOnce(report, "engine.verificationHostsIncomplete");
+        }
 
         if (!HasErrors(report))
             report.Lines.Add(LocalizedLine.Ok("engine.verificationPassed"));
@@ -665,13 +811,6 @@ public sealed class UnlockerEngine
         }
     }
 
-    private bool IsNetworkProtectionComplete(UnlockerOptions options, OperationReport report)
-    {
-        var firewallComplete = !options.ManageFirewall || SafeQueryFirewall(report).IsComplete;
-        var hostsComplete = !options.ManageHosts || SafeQueryHosts(report).AllBlocked;
-        return firewallComplete && hostsComplete;
-    }
-
     private bool ValidateUserContext(OperationReport report, UnlockerOptions options)
     {
         try
@@ -706,38 +845,59 @@ public sealed class UnlockerEngine
         }
     }
 
-    private FirewallProtectionStatus SafeQueryFirewall(OperationReport report)
+    private FirewallProtectionStatus SafeQueryFirewall(
+        OperationReport report,
+        bool reportFailure = true)
     {
         try
         {
             var status = _operations.InspectFirewallProtection();
-            if (!status.QuerySucceeded)
+            if (reportFailure && !status.QuerySucceeded)
                 report.Lines.Add(LocalizedLine.Err("engine.firewallInspectionFailed", status.Error));
 
             return status;
         }
         catch (Exception exception)
         {
-            report.Lines.Add(LocalizedLine.Err("engine.firewallInspectionFailed", exception.Message));
+            if (reportFailure)
+                report.Lines.Add(LocalizedLine.Err("engine.firewallInspectionFailed", exception.Message));
+
             return EmptyFirewallStatus(exception.Message);
         }
     }
 
-    private HostsInspection SafeQueryHosts(OperationReport report)
+    private HostsInspection SafeQueryHosts(
+        OperationReport report,
+        bool reportFailure = true)
     {
         try
         {
             var status = _operations.InspectHosts();
-            if (!status.Success)
+            if (reportFailure && !status.Success)
                 report.Lines.Add(LocalizedLine.Err("engine.hostsInspectionFailed", status.Error));
 
             return status;
         }
         catch (Exception exception)
         {
-            report.Lines.Add(LocalizedLine.Err("engine.hostsInspectionFailed", exception.Message));
+            if (reportFailure)
+                report.Lines.Add(LocalizedLine.Err("engine.hostsInspectionFailed", exception.Message));
+
             return new HostsInspection(false, [], 0, exception.Message);
         }
+    }
+
+    private static void AddErrorOnce(OperationReport report, string localizationKey)
+    {
+        var message = Text.Get(localizationKey);
+        if (report.Lines.Any(line =>
+                line.Level.Equals("ERR", StringComparison.OrdinalIgnoreCase) &&
+                line.Text.Equals(message, StringComparison.Ordinal)))
+        {
+            return;
+        }
+
+        report.Lines.Add(new OperationLine { Level = "ERR", Text = message });
     }
 
     private static void AddOperationLines(
@@ -752,6 +912,38 @@ public sealed class UnlockerEngine
         catch (Exception exception)
         {
             report.Lines.Add(LocalizedLine.Err(failureKey, exception.Message));
+        }
+    }
+
+    private static bool AddRetryableOperationLines(
+        OperationReport report,
+        Func<IReadOnlyList<OperationLine>> operation)
+    {
+        try
+        {
+            var operationLines = operation();
+            report.Lines.AddRange(operationLines.Where(line =>
+                !line.Level.Equals("ERR", StringComparison.OrdinalIgnoreCase)));
+
+            var failures = operationLines
+                .Where(line => line.Level.Equals("ERR", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (failures.Count == 0)
+                return true;
+
+            report.Lines.Add(LocalizedLine.Info(
+                "engine.retryableNetworkStep",
+                failures.Count,
+                failures[0].Text));
+            return false;
+        }
+        catch (Exception exception)
+        {
+            report.Lines.Add(LocalizedLine.Info(
+                "engine.retryableNetworkStep",
+                1,
+                exception.Message));
+            return false;
         }
     }
 
@@ -794,4 +986,17 @@ public sealed class UnlockerEngine
         IReadOnlyList<TaskItem> TasksToDisable,
         IReadOnlyList<TaskItem> TasksToStop,
         IReadOnlyList<RunEntry> RunEntriesToRemove);
+
+    private enum ApplyTamedStateResult
+    {
+        Applied,
+        NetworkIncomplete,
+        Failed
+    }
+
+    private enum NetworkVerificationMode
+    {
+        Required,
+        Retryable
+    }
 }

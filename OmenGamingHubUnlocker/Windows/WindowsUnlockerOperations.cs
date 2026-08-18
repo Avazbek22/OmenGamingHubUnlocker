@@ -28,8 +28,11 @@ public sealed class WindowsUnlockerOperations : IUnlockerOperations
     public HostsInspection InspectHosts()
         => HostsManager.Inspect(OmenTargets.HostsDomains, OmenTargets.HostsMarker);
 
+    public FirewallTargetSet DiscoverFirewallTargets()
+        => FirewallManager.DiscoverTargets();
+
     public IReadOnlyList<string> DiscoverFirewallExecutables()
-        => FirewallManager.DiscoverCandidateExecutables()
+        => DiscoverFirewallTargets().AllExecutables
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -103,8 +106,11 @@ public sealed class WindowsUnlockerOperations : IUnlockerOperations
             FirewallManager.DiscoverCandidateExecutables(),
             dryRun);
 
-    public IReadOnlyList<OperationLine> ActivateFirewall(bool dryRun)
-        => FirewallManager.ActivateFirewallBlock(OmenTargets.FirewallRulePrefix, dryRun);
+    public IReadOnlyList<OperationLine> ActivateFirewall(bool dryRun, bool removeStaleRules = false)
+        => FirewallManager.ActivateFirewallBlock(
+            OmenTargets.FirewallRulePrefix,
+            dryRun,
+            removeStaleRules);
 
     public IReadOnlyList<OperationLine> DisableFirewall(bool dryRun)
         => FirewallManager.DisableFirewallBlock(OmenTargets.FirewallRulePrefix, dryRun);

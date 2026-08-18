@@ -92,6 +92,30 @@ public sealed class FirewallProtectionStatusTests
         Assert.False(status.IsComplete);
     }
 
+    [Fact]
+    public void IsComplete_ShouldRejectPartialExecutableDiscovery()
+    {
+        var targets = CreateTargets() with
+        {
+            PackageDirectoryReady = false,
+            DiscoveryErrors = ["access denied"]
+        };
+        var status = new FirewallProtectionStatus(
+            true,
+            targets,
+            [
+                new FirewallRuleInfo("program", true, true, true, CurrentExecutable, string.Empty),
+                new FirewallRuleInfo("package", true, true, true, string.Empty, PackageSid)
+            ],
+            [],
+            [],
+            true,
+            string.Empty);
+
+        Assert.False(targets.DiscoveryComplete);
+        Assert.False(status.IsComplete);
+    }
+
     private static FirewallTargetSet CreateTargets(string packageSid = PackageSid)
         => new(
             new AppxPackageInfo("Omen", "Omen_family", "Omen_2", @"C:\WindowsApps\Omen\v2"),

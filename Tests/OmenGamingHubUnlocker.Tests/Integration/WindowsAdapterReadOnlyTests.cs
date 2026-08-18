@@ -26,6 +26,15 @@ public sealed class WindowsAdapterReadOnlyTests
         Assert.NotNull(status.Rules);
         Assert.NotNull(status.MissingExecutableRules);
         Assert.NotNull(status.StaleExecutableRules);
+
+        if (status.Targets.Package is not null)
+        {
+            Assert.True(
+                status.Targets.DiscoveryComplete,
+                string.Join(Environment.NewLine, status.Targets.ScanErrors));
+            Assert.True(status.Targets.PackageDirectoryReady);
+            Assert.NotEmpty(status.Targets.PackageExecutables);
+        }
     }
 
     [Fact]

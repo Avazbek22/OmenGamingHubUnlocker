@@ -12,6 +12,7 @@ public interface IUnlockerOperations
     UserContextStatus InspectUserContext();
     FirewallProtectionStatus InspectFirewallProtection();
     HostsInspection InspectHosts();
+    FirewallTargetSet DiscoverFirewallTargets();
     IReadOnlyList<string> DiscoverFirewallExecutables();
     bool TryGetPrimaryPackage(out AppxPackageInfo? package, out string details);
     IReadOnlyList<(string Name, bool Success, string Details)> RunCapabilityChecks();
@@ -24,7 +25,7 @@ public interface IUnlockerOperations
     IReadOnlyList<OperationLine> RemoveRunEntries(IEnumerable<RunEntry> entries, bool dryRun);
     IReadOnlyList<OperationLine> RestoreRunEntries(IEnumerable<RunEntryBackup> entries, bool dryRun);
     IReadOnlyList<OperationLine> TerminateTargetProcesses(bool dryRun);
-    IReadOnlyList<OperationLine> ActivateFirewall(bool dryRun);
+    IReadOnlyList<OperationLine> ActivateFirewall(bool dryRun, bool removeStaleRules = false);
     IReadOnlyList<OperationLine> DisableFirewall(bool dryRun);
     IReadOnlyList<OperationLine> ActivateHosts(bool dryRun);
     IReadOnlyList<OperationLine> DisableHosts(bool dryRun);

@@ -10,6 +10,9 @@ internal sealed class FakeUnlockerOperations : IUnlockerOperations
     public List<RunEntry> RunEntries { get; } = [];
     public List<string> Executables { get; } = [@"C:\Program Files\WindowsApps\Omen\v1\Omen.exe"];
     public List<string> Calls { get; } = [];
+    public List<bool> FirewallCleanupRequests { get; } = [];
+    public Queue<Action<FakeUnlockerOperations>> TargetDiscoverySteps { get; } = [];
+    public Queue<Action<FakeUnlockerOperations>> FirewallInspectionSteps { get; } = [];
 
     public AppxPackageInfo? Package { get; set; } = new(
         OmenTargets.PrimaryAppxPackageName,
@@ -21,10 +24,14 @@ internal sealed class FakeUnlockerOperations : IUnlockerOperations
     public HostsInspection Hosts { get; set; }
     public Action<FakeUnlockerOperations>? OnReset { get; set; }
     public bool FailFirewallActivation { get; set; }
+    public int FirewallActivationFailuresRemaining { get; set; }
+    public int FirewallCleanupFailuresRemaining { get; set; }
     public bool FailReset { get; set; }
     public bool ThrowOnServiceQuery { get; set; }
     public bool KeepProcessesRunning { get; set; }
     public bool FailServiceRestore { get; set; }
+    public bool PackageDirectoryReady { get; set; } = true;
+    public IReadOnlyList<string> FirewallDiscoveryErrors { get; set; } = [];
     public UserContextStatus UserContext { get; set; } =
         new(true, @"TEST\User", @"TEST\User", string.Empty);
 
@@ -70,6 +77,9 @@ internal sealed class FakeUnlockerOperations : IUnlockerOperations
     public FirewallProtectionStatus InspectFirewallProtection()
     {
         Calls.Add("InspectFirewall");
+        if (FirewallInspectionSteps.TryDequeue(out var inspectionStep))
+            inspectionStep(this);
+
         return Firewall;
     }
 
@@ -79,10 +89,21 @@ internal sealed class FakeUnlockerOperations : IUnlockerOperations
         return Hosts;
     }
 
+    public FirewallTargetSet DiscoverFirewallTargets()
+    {
+        Calls.Add("DiscoverFirewallTargets");
+        if (TargetDiscoverySteps.TryDequeue(out var discoveryStep))
+            discoveryStep(this);
+
+        return BuildFirewallTargets();
+    }
+
     public IReadOnlyList<string> DiscoverFirewallExecutables()
     {
         Calls.Add("DiscoverExecutables");
-        return Executables.ToList();
+        return DiscoverFirewallTargets().AllExecutables
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     public bool TryGetPrimaryPackage(out AppxPackageInfo? package, out string details)
@@ -218,14 +239,21 @@ internal sealed class FakeUnlockerOperations : IUnlockerOperations
         return [Ok("Processes terminated")];
     }
 
-    public IReadOnlyList<OperationLine> ActivateFirewall(bool dryRun)
+    public IReadOnlyList<OperationLine> ActivateFirewall(bool dryRun, bool removeStaleRules = false)
     {
         Calls.Add("ActivateFirewall");
+        FirewallCleanupRequests.Add(removeStaleRules);
         if (dryRun)
             return [Ok("Would activate firewall")];
 
-        if (FailFirewallActivation)
+        var cleanupFailed = removeStaleRules && FirewallCleanupFailuresRemaining > 0;
+        if (FailFirewallActivation || FirewallActivationFailuresRemaining > 0 || cleanupFailed)
         {
+            if (FirewallActivationFailuresRemaining > 0)
+                FirewallActivationFailuresRemaining--;
+            if (cleanupFailed)
+                FirewallCleanupFailuresRemaining--;
+
             Firewall = BuildFirewallStatus(isComplete: false);
             return [Error("Firewall activation failed")];
         }
@@ -276,12 +304,7 @@ internal sealed class FakeUnlockerOperations : IUnlockerOperations
 
     public FirewallProtectionStatus BuildFirewallStatus(bool isComplete, bool noManagedRules = false)
     {
-        var targets = new FirewallTargetSet(
-            Package,
-            PackageSid,
-            string.Empty,
-            Executables.ToHashSet(StringComparer.OrdinalIgnoreCase),
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        var targets = BuildFirewallTargets();
         var rules = noManagedRules
             ? []
             : isComplete
@@ -309,6 +332,18 @@ internal sealed class FakeUnlockerOperations : IUnlockerOperations
             isComplete && !noManagedRules,
             string.Empty);
     }
+
+    public FirewallTargetSet BuildFirewallTargets(
+        bool? packageDirectoryReady = null,
+        IReadOnlyList<string>? discoveryErrors = null)
+        => new(
+            Package,
+            PackageSid,
+            string.Empty,
+            Executables.ToHashSet(StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            packageDirectoryReady ?? PackageDirectoryReady,
+            discoveryErrors ?? FirewallDiscoveryErrors);
 
     private static HostsInspection BuildHostsInspection(bool allBlocked, int managedLineCount)
         => new(
