@@ -7,7 +7,8 @@ public sealed record ServiceBackup(
     string Name,
     string OriginalStartMode,
     bool OriginalRunning = false,
-    bool OriginalDelayedAutoStart = false);
+    bool OriginalDelayedAutoStart = false,
+    string PathName = "");
 
 /// <summary>
 /// Stores the original enabled and runtime state of a scheduled task.
@@ -15,7 +16,21 @@ public sealed record ServiceBackup(
 public sealed record TaskBackup(
     string Path,
     bool OriginalEnabled,
-    bool OriginalRunning = false);
+    bool OriginalRunning = false,
+    ScheduledTaskRuntimeState OriginalRuntimeState = ScheduledTaskRuntimeState.Unknown,
+    IReadOnlyList<string>? Actions = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public ScheduledTaskRuntimeState EffectiveOriginalRuntimeState =>
+        OriginalRuntimeState != ScheduledTaskRuntimeState.Unknown
+            ? OriginalRuntimeState
+            : OriginalRunning
+                ? ScheduledTaskRuntimeState.Running
+                : ScheduledTaskRuntimeState.Ready;
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyList<string> ActionPaths => Actions ?? [];
+}
 
 /// <summary>
 /// Stores the original value of a Run entry together with its registry location.
@@ -49,7 +64,7 @@ public sealed class UnlockerState
 /// </summary>
 public sealed class UnlockerStateStore : IUnlockerStateStore
 {
-    public const int CurrentSchemaVersion = 5;
+    public const int CurrentSchemaVersion = 6;
     private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan LockRetryDelay = TimeSpan.FromMilliseconds(50);
 
@@ -61,12 +76,14 @@ public sealed class UnlockerStateStore : IUnlockerStateStore
     private readonly string _stateFilePath;
     private readonly string _lockFilePath;
     private readonly string _currentUserSid;
+    private readonly bool _hardenStorage;
 
     public UnlockerStateStore(string? stateFilePath = null, string? currentUserSid = null)
     {
         _currentUserSid = string.IsNullOrWhiteSpace(currentUserSid)
             ? ResolveCurrentUserSid()
             : currentUserSid.Trim();
+        _hardenStorage = string.IsNullOrWhiteSpace(stateFilePath);
 
         if (!string.IsNullOrWhiteSpace(stateFilePath))
         {
@@ -108,7 +125,7 @@ public sealed class UnlockerStateStore : IUnlockerStateStore
                 });
             }
 
-            var json = File.ReadAllText(_stateFilePath);
+            var json = SecureStorage.ReadAllText(_stateFilePath);
             var state = JsonSerializer.Deserialize<UnlockerState>(json, SerializerOptions);
             if (state is null)
                 return StateLoadResult.Failed("The rollback state file is empty.");
@@ -119,8 +136,17 @@ public sealed class UnlockerStateStore : IUnlockerStateStore
                     $"Rollback schema {state.SchemaVersion} is newer than supported schema {CurrentSchemaVersion}.");
             }
 
-            if (!string.IsNullOrWhiteSpace(state.OwnerUserSid) &&
-                !state.OwnerUserSid.Equals(_currentUserSid, StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(state.OwnerUserSid) && state.HasRollbackRecord)
+            {
+                var fileOwnerSid = SecureStorage.TryGetOwnerSid(_stateFilePath);
+                if (!string.Equals(fileOwnerSid, _currentUserSid, StringComparison.OrdinalIgnoreCase))
+                {
+                    return StateLoadResult.Failed(
+                        "Legacy rollback state has no verifiable Windows user owner and cannot be adopted safely.");
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(state.OwnerUserSid) &&
+                     !state.OwnerUserSid.Equals(_currentUserSid, StringComparison.OrdinalIgnoreCase))
             {
                 return StateLoadResult.Failed(
                     $"The rollback state belongs to Windows user {state.OwnerUserSid}, not {_currentUserSid}.");
@@ -131,6 +157,23 @@ public sealed class UnlockerStateStore : IUnlockerStateStore
                                         state.Tasks.Count > 0 ||
                                         state.RunEntries.Count > 0;
             state.OwnerUserSid = _currentUserSid;
+
+            for (var index = 0; index < state.Tasks.Count; index++)
+            {
+                var task = state.Tasks[index];
+                if (task.OriginalRuntimeState == ScheduledTaskRuntimeState.Unknown)
+                {
+                    state.Tasks[index] = task with
+                    {
+                        OriginalRuntimeState = task.OriginalRunning
+                            ? ScheduledTaskRuntimeState.Running
+                            : ScheduledTaskRuntimeState.Ready
+                    };
+                }
+            }
+
+            if (!TryValidateState(state, out var validationError))
+                return StateLoadResult.Failed(validationError);
 
             state.SchemaVersion = CurrentSchemaVersion;
             return StateLoadResult.Loaded(state);
@@ -174,8 +217,7 @@ public sealed class UnlockerStateStore : IUnlockerStateStore
                 return false;
             }
 
-            if (File.Exists(_stateFilePath))
-                File.Delete(_stateFilePath);
+            SecureStorage.DeleteFile(_stateFilePath);
 
             failureDetails = string.Empty;
             return true;
@@ -193,18 +235,14 @@ public sealed class UnlockerStateStore : IUnlockerStateStore
         if (string.IsNullOrWhiteSpace(stateDirectory))
             throw new InvalidOperationException("State lock directory path is invalid.");
 
-        Directory.CreateDirectory(stateDirectory);
+        SecureStorage.EnsureDirectory(stateDirectory, _hardenStorage);
         var stopwatch = Stopwatch.StartNew();
 
         while (true)
         {
             try
             {
-                return new FileStream(
-                    _lockFilePath,
-                    FileMode.OpenOrCreate,
-                    FileAccess.ReadWrite,
-                    FileShare.None);
+                return SecureStorage.OpenExclusiveLock(_lockFilePath);
             }
             catch (IOException) when (stopwatch.Elapsed < LockTimeout)
             {
@@ -218,84 +256,131 @@ public sealed class UnlockerStateStore : IUnlockerStateStore
 
     private void Save(UnlockerState state)
     {
-        var stateDirectory = Path.GetDirectoryName(_stateFilePath);
-        if (string.IsNullOrWhiteSpace(stateDirectory))
-            throw new InvalidOperationException("State directory path is invalid.");
-
-        Directory.CreateDirectory(stateDirectory);
-
         var json = JsonSerializer.Serialize(state, SerializerOptions);
-        var temporaryPath = Path.Combine(
-            stateDirectory,
-            $".{Path.GetFileName(_stateFilePath)}.{Guid.NewGuid():N}.tmp");
-
-        try
-        {
-            File.WriteAllText(temporaryPath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-            if (File.Exists(_stateFilePath))
-            {
-                File.Replace(
-                    temporaryPath,
-                    _stateFilePath,
-                    destinationBackupFileName: null,
-                    ignoreMetadataErrors: true);
-            }
-            else
-            {
-                File.Move(temporaryPath, _stateFilePath);
-            }
-        }
-        finally
-        {
-            try
-            {
-                if (File.Exists(temporaryPath))
-                    File.Delete(temporaryPath);
-            }
-            catch
-            {
-                // A stale temporary file does not invalidate the committed state file.
-            }
-        }
+        SecureStorage.WriteAllTextAtomically(
+            _stateFilePath,
+            json,
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+            _hardenStorage);
     }
 
     private static void MergeServices(List<ServiceBackup> existingBackups, IEnumerable<ServiceBackup> newBackups)
     {
-        var knownServiceNames = new HashSet<string>(
-            existingBackups.Select(backup => backup.Name),
-            StringComparer.OrdinalIgnoreCase);
-
         foreach (var backup in newBackups.DistinctBy(item => item.Name, StringComparer.OrdinalIgnoreCase))
         {
-            if (knownServiceNames.Add(backup.Name))
+            var existingIndex = existingBackups.FindIndex(existing =>
+                existing.Name.Equals(backup.Name, StringComparison.OrdinalIgnoreCase));
+            if (existingIndex < 0)
+            {
                 existingBackups.Add(backup);
+                continue;
+            }
+
+            var existing = existingBackups[existingIndex];
+            if (string.IsNullOrWhiteSpace(existing.PathName))
+            {
+                existingBackups[existingIndex] = existing with { PathName = backup.PathName };
+                continue;
+            }
+
+            if (!TargetIdentityMatcher.ServiceIdentityEquals(existing.PathName, backup.PathName))
+                existingBackups[existingIndex] = backup;
         }
     }
 
     private static void MergeTasks(List<TaskBackup> existingBackups, IEnumerable<TaskBackup> newBackups)
     {
-        var knownTaskPaths = new HashSet<string>(
-            existingBackups.Select(backup => backup.Path),
-            StringComparer.OrdinalIgnoreCase);
-
         foreach (var backup in newBackups.DistinctBy(item => item.Path, StringComparer.OrdinalIgnoreCase))
         {
-            if (knownTaskPaths.Add(backup.Path))
+            var existingIndex = existingBackups.FindIndex(existing =>
+                existing.Path.Equals(backup.Path, StringComparison.OrdinalIgnoreCase));
+            if (existingIndex < 0)
+            {
                 existingBackups.Add(backup);
+                continue;
+            }
+
+            var existing = existingBackups[existingIndex];
+            if (existing.Actions is null)
+            {
+                existingBackups[existingIndex] = existing with { Actions = backup.Actions };
+                continue;
+            }
+
+            if (backup.Actions is null)
+                continue;
+
+            if (!TargetIdentityMatcher.TaskIdentityEquals(existing.Actions, backup.Actions))
+                existingBackups[existingIndex] = backup;
         }
     }
 
     private static void MergeRunEntries(List<RunEntryBackup> existingBackups, IEnumerable<RunEntryBackup> newBackups)
     {
-        var knownEntryKeys = new HashSet<string>(
-            existingBackups.Select(BuildRunEntryIdentity),
-            StringComparer.OrdinalIgnoreCase);
-
         foreach (var backup in newBackups.DistinctBy(BuildRunEntryIdentity, StringComparer.OrdinalIgnoreCase))
         {
-            if (knownEntryKeys.Add(BuildRunEntryIdentity(backup)))
+            var existingIndex = existingBackups.FindIndex(existing =>
+                BuildRunEntryIdentity(existing).Equals(
+                    BuildRunEntryIdentity(backup),
+                    StringComparison.OrdinalIgnoreCase));
+            if (existingIndex < 0)
+            {
                 existingBackups.Add(backup);
+                continue;
+            }
+
+            var existing = existingBackups[existingIndex];
+            if (!existing.Value.Equals(backup.Value, StringComparison.Ordinal) ||
+                existing.ValueKind != backup.ValueKind)
+            {
+                existingBackups[existingIndex] = backup;
+            }
         }
+    }
+
+    private static bool TryValidateState(UnlockerState state, out string error)
+    {
+        if (state.Services.Any(service =>
+                string.IsNullOrWhiteSpace(service.Name) ||
+                !IsSupportedServiceMode(service.OriginalStartMode)))
+        {
+            error = "Rollback state contains an invalid service backup.";
+            return false;
+        }
+
+        if (HasDuplicate(state.Services, service => service.Name) ||
+            state.Tasks.Any(task =>
+                string.IsNullOrWhiteSpace(task.Path) ||
+                !Enum.IsDefined(task.OriginalRuntimeState) ||
+                task.Actions?.Any(string.IsNullOrWhiteSpace) == true) ||
+            HasDuplicate(state.Tasks, task => task.Path))
+        {
+            error = "Rollback state contains an invalid scheduled-task backup.";
+            return false;
+        }
+
+        if (state.RunEntries.Any(entry =>
+                (entry.Hive is not RegistryHive.CurrentUser and not RegistryHive.LocalMachine) ||
+                (entry.View is not RegistryView.Registry32 and not RegistryView.Registry64) ||
+                string.IsNullOrWhiteSpace(entry.Name) ||
+                (entry.ValueKind is not RegistryValueKind.String and not RegistryValueKind.ExpandString)) ||
+            HasDuplicate(state.RunEntries, BuildRunEntryIdentity))
+        {
+            error = "Rollback state contains an invalid Run-entry backup.";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    private static bool IsSupportedServiceMode(string mode)
+        => ServiceManager.NormalizeStartMode(mode) is "Automatic" or "Manual" or "Disabled";
+
+    private static bool HasDuplicate<T>(IEnumerable<T> values, Func<T, string> identity)
+    {
+        var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        return values.Any(value => !identities.Add(identity(value)));
     }
 
     private static string BuildRunEntryIdentity(RunEntryBackup backup)

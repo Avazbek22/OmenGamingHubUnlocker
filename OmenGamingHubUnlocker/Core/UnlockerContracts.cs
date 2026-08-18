@@ -18,11 +18,11 @@ public interface IUnlockerOperations
     IReadOnlyList<(string Name, bool Success, string Details)> RunCapabilityChecks();
 
     IReadOnlyList<OperationLine> SetServiceStartModes(IEnumerable<ServiceStartModeTarget> targets, bool dryRun);
-    IReadOnlyList<OperationLine> StopServices(IEnumerable<string> serviceNames, bool dryRun);
-    IReadOnlyList<OperationLine> StartServices(IEnumerable<string> serviceNames, bool dryRun);
+    IReadOnlyList<OperationLine> StopServices(IEnumerable<ServiceRuntimeTarget> targets, bool dryRun);
+    IReadOnlyList<OperationLine> StartServices(IEnumerable<ServiceRuntimeTarget> targets, bool dryRun);
     IReadOnlyList<OperationLine> SetTaskEnabledStates(IEnumerable<TaskEnableTarget> targets, bool dryRun);
-    IReadOnlyList<OperationLine> StopTasks(IEnumerable<string> taskPaths, bool dryRun);
-    IReadOnlyList<OperationLine> StartTasks(IEnumerable<string> taskPaths, bool dryRun);
+    IReadOnlyList<OperationLine> StopTasks(IEnumerable<TaskRuntimeTarget> targets, bool dryRun);
+    IReadOnlyList<OperationLine> StartTasks(IEnumerable<TaskRuntimeTarget> targets, bool dryRun);
     IReadOnlyList<OperationLine> RemoveRunEntries(IEnumerable<RunEntry> entries, bool dryRun);
     IReadOnlyList<OperationLine> RestoreRunEntries(IEnumerable<RunEntryBackup> entries, bool dryRun);
     IReadOnlyList<OperationLine> TerminateTargetProcesses(bool dryRun);
@@ -67,6 +67,20 @@ public interface IUnlockerStateStore
         IEnumerable<RunEntryBackup> runEntryBackups);
 
     bool TryClear(out string failureDetails);
+}
+
+/// <summary>
+/// Persists the current mutation phase so an interrupted operation can recover network isolation first.
+/// </summary>
+public interface IOperationJournalStore
+{
+    OperationJournalLoadResult Load();
+    OperationJournalEntry Begin(
+        UnlockerOperationKind operation,
+        bool manageFirewall,
+        bool manageHosts);
+    void Advance(Guid operationId, UnlockerOperationPhase phase);
+    void Complete(Guid operationId);
 }
 
 public sealed record StateLoadResult(UnlockerState State, bool Success, string Error)

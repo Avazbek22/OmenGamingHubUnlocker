@@ -14,4 +14,14 @@ public sealed class TaskItemTests
 
         Assert.Equal(expected, task.RequiresStop);
     }
+
+    [Fact]
+    public void ActionPaths_ShouldReflectActionsChangedByARecordClone()
+    {
+        var original = new TaskItem(@"\OmenTask", true, "Ready", [@"C:\HP\v1.exe"]);
+
+        var updated = original with { Actions = [@"C:\HP\v2.exe"] };
+
+        Assert.Equal([@"C:\HP\v2.exe"], updated.ActionPaths);
+    }
 }

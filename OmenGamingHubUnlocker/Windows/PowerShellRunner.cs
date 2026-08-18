@@ -28,18 +28,36 @@ public static class PowerShellRunner
     /// </summary>
     public static bool TryRun(string fileName, string arguments, out string standardOutput, out string standardError, int timeoutMs = 30_000)
     {
+        var processStartInfo = CreateStartInfo(fileName);
+        processStartInfo.Arguments = arguments;
+        return TryRun(processStartInfo, out standardOutput, out standardError, timeoutMs);
+    }
+
+    /// <summary>
+    /// Executes a child process with an argument list so system-owned names cannot alter command parsing.
+    /// </summary>
+    public static bool TryRun(
+        string fileName,
+        IEnumerable<string> arguments,
+        out string standardOutput,
+        out string standardError,
+        int timeoutMs = 30_000)
+    {
+        var processStartInfo = CreateStartInfo(fileName);
+        foreach (var argument in arguments)
+            processStartInfo.ArgumentList.Add(argument);
+
+        return TryRun(processStartInfo, out standardOutput, out standardError, timeoutMs);
+    }
+
+    private static bool TryRun(
+        ProcessStartInfo processStartInfo,
+        out string standardOutput,
+        out string standardError,
+        int timeoutMs)
+    {
         try
         {
-            var processStartInfo = new ProcessStartInfo
-            {
-                FileName = fileName,
-                Arguments = arguments,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-
             using var process = new Process
             {
                 StartInfo = processStartInfo,
@@ -97,11 +115,21 @@ public static class PowerShellRunner
         var encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
         return TryRun(
             WindowsPaths.WindowsPowerShell,
-            $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encodedScript}",
+            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodedScript],
             out standardOutput,
             out standardError,
             timeoutMs);
     }
+
+    private static ProcessStartInfo CreateStartInfo(string fileName)
+        => new()
+        {
+            FileName = fileName,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
 
     private static void TryKillProcess(Process process)
     {

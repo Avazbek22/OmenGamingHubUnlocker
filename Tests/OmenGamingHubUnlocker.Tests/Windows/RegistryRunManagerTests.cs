@@ -23,6 +23,45 @@ public sealed class RegistryRunManagerTests
     }
 
     [Fact]
+    public void RemoveEntries_ShouldRefuseAValueChangedAfterDiscovery()
+    {
+        using var registryScope = TemporaryRegistryScope.Create();
+        registryScope.Key.SetValue("OmenBackground", "Replacement.exe", RegistryValueKind.String);
+        var staleSnapshot = new RunEntry(
+            RegistryHive.CurrentUser,
+            RegistryView.Registry64,
+            "OmenBackground",
+            "Original.exe");
+
+        var lines = RegistryRunManager.RemoveEntriesAtSubKey(
+            [staleSnapshot],
+            dryRun: false,
+            registryScope.SubKeyPath);
+
+        Assert.Equal("Replacement.exe", registryScope.Key.GetValue("OmenBackground"));
+        Assert.Contains(lines, line => line.Level == "ERR");
+    }
+
+    [Fact]
+    public void RemoveEntries_ShouldTreatAnAlreadyMissingValueAsSuccess()
+    {
+        using var registryScope = TemporaryRegistryScope.Create();
+        var snapshot = new RunEntry(
+            RegistryHive.CurrentUser,
+            RegistryView.Registry64,
+            "OmenBackground",
+            "Original.exe");
+
+        var lines = RegistryRunManager.RemoveEntriesAtSubKey(
+            [snapshot],
+            dryRun: false,
+            registryScope.SubKeyPath);
+
+        Assert.DoesNotContain(lines, line => line.Level == "ERR");
+        Assert.Contains(lines, line => line.Level == "INFO");
+    }
+
+    [Fact]
     public void RestoreEntries_ShouldRestoreMissingValue()
     {
         using var registryScope = TemporaryRegistryScope.Create();

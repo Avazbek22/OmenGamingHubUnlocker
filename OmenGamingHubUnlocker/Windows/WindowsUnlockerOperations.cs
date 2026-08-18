@@ -103,22 +103,22 @@ public sealed class WindowsUnlockerOperations : IUnlockerOperations
         bool dryRun)
         => ServiceManager.ApplyStartModeTargets(targets, dryRun);
 
-    public IReadOnlyList<OperationLine> StopServices(IEnumerable<string> serviceNames, bool dryRun)
-        => ServiceManager.StopServices(serviceNames, dryRun);
+    public IReadOnlyList<OperationLine> StopServices(IEnumerable<ServiceRuntimeTarget> targets, bool dryRun)
+        => ServiceManager.StopServices(targets, dryRun);
 
-    public IReadOnlyList<OperationLine> StartServices(IEnumerable<string> serviceNames, bool dryRun)
-        => ServiceManager.StartServices(serviceNames, dryRun);
+    public IReadOnlyList<OperationLine> StartServices(IEnumerable<ServiceRuntimeTarget> targets, bool dryRun)
+        => ServiceManager.StartServices(targets, dryRun);
 
     public IReadOnlyList<OperationLine> SetTaskEnabledStates(
         IEnumerable<TaskEnableTarget> targets,
         bool dryRun)
         => TaskSchedulerManager.ApplyEnabledTargets(targets, dryRun);
 
-    public IReadOnlyList<OperationLine> StopTasks(IEnumerable<string> taskPaths, bool dryRun)
-        => TaskSchedulerManager.StopTasks(taskPaths, dryRun);
+    public IReadOnlyList<OperationLine> StopTasks(IEnumerable<TaskRuntimeTarget> targets, bool dryRun)
+        => TaskSchedulerManager.StopTasks(targets, dryRun);
 
-    public IReadOnlyList<OperationLine> StartTasks(IEnumerable<string> taskPaths, bool dryRun)
-        => TaskSchedulerManager.StartTasks(taskPaths, dryRun);
+    public IReadOnlyList<OperationLine> StartTasks(IEnumerable<TaskRuntimeTarget> targets, bool dryRun)
+        => TaskSchedulerManager.StartTasks(targets, dryRun);
 
     public IReadOnlyList<OperationLine> RemoveRunEntries(IEnumerable<RunEntry> entries, bool dryRun)
         => RegistryRunManager.RemoveEntries(entries, dryRun);

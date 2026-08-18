@@ -1,4 +1,3 @@
-using System.Management;
 namespace OmenGamingHubUnlocker.Windows;
 
 /// <summary>
@@ -18,107 +17,98 @@ public sealed record ServiceItem(
 public sealed record ServiceStartModeTarget(
     string Name,
     string DesiredStartMode,
-    bool DelayedAutoStart = false);
+    bool DelayedAutoStart = false,
+    string ExpectedPathName = "");
 
 /// <summary>
-/// Encapsulates WMI-based service discovery and startup mode changes.
+/// Identifies the exact service instance whose runtime state may be changed.
+/// </summary>
+public sealed record ServiceRuntimeTarget(
+    string Name,
+    string ExpectedPathName = "");
+
+/// <summary>
+/// Uses bounded child processes for service discovery and mutation so a damaged WMI provider cannot hang the app.
 /// </summary>
 public static class ServiceManager
 {
+    private const int DiscoveryTimeoutMilliseconds = 30_000;
+    private const int CommandTimeoutMilliseconds = 20_000;
+    private const int StateWaitTimeoutMilliseconds = 20_000;
+
     public static (bool ok, string details) CheckCapability()
-    {
-        try
-        {
-            using var searcher = new ManagementObjectSearcher("SELECT Name FROM Win32_Service");
-            _ = searcher.Get().Count;
-            return (true, Text.Get("manager.services.capabilityOk"));
-        }
-        catch (Exception exception)
-        {
-            return (false, exception.Message);
-        }
-    }
+        => TryQueryAllServices(out _, out var error)
+            ? (true, Text.Get("manager.services.capabilityOk"))
+            : (false, error);
 
     public static List<ServiceItem> QueryServices(string[] patterns)
     {
-        var matchingServices = new List<ServiceItem>();
-        var matchEverything = patterns.Length == 0;
+        if (!TryQueryAllServices(out var services, out var error))
+            throw new InvalidOperationException($"Service discovery failed: {error}");
 
-        using var searcher = new ManagementObjectSearcher(
-            "SELECT Name, DisplayName, StartMode, State, PathName, DelayedAutoStart FROM Win32_Service");
-        foreach (ManagementObject serviceObject in searcher.Get())
-        {
-            var serviceName = (string)(serviceObject["Name"] ?? string.Empty);
-            var serviceDisplayName = (string)(serviceObject["DisplayName"] ?? string.Empty);
-            var serviceStartMode = (string)(serviceObject["StartMode"] ?? string.Empty);
-            var serviceState = (string)(serviceObject["State"] ?? string.Empty);
-            var servicePath = (string)(serviceObject["PathName"] ?? string.Empty);
-            var delayedAutoStart = serviceObject["DelayedAutoStart"] is bool delayed && delayed;
+        if (patterns.Length == 0)
+            return services;
 
-            if (matchEverything ||
-                (patterns.Any(pattern =>
-                    WildcardMatcher.IsMatch(serviceName, pattern) ||
-                    WildcardMatcher.IsMatch(serviceDisplayName, pattern) ||
-                    WildcardMatcher.IsMatch(servicePath, pattern)) &&
-                 OmenIdentity.IsLikelyOmenReference(serviceName, serviceDisplayName, servicePath)))
-            {
-                matchingServices.Add(new ServiceItem(
-                    serviceName,
-                    serviceDisplayName,
-                    serviceStartMode,
-                    serviceState,
-                    servicePath,
-                    delayedAutoStart));
-            }
-        }
-
-        return matchingServices;
+        return services
+            .Where(service =>
+                patterns.Any(pattern =>
+                    WildcardMatcher.IsMatch(service.Name, pattern) ||
+                    WildcardMatcher.IsMatch(service.DisplayName, pattern) ||
+                    WildcardMatcher.IsMatch(service.PathName, pattern)) &&
+                OmenIdentity.IsLikelyOmenReference(service.Name, service.DisplayName, service.PathName))
+            .ToList();
     }
 
-    public static List<OperationLine> StopServices(IEnumerable<string> serviceNames, bool dryRun)
-        => ChangeServiceRunningState(serviceNames, desiredRunning: false, dryRun);
+    public static List<OperationLine> StopServices(
+        IEnumerable<ServiceRuntimeTarget> targets,
+        bool dryRun)
+        => ChangeServiceRunningState(targets, desiredRunning: false, dryRun);
 
-    public static List<OperationLine> StartServices(IEnumerable<string> serviceNames, bool dryRun)
-        => ChangeServiceRunningState(serviceNames, desiredRunning: true, dryRun);
+    public static List<OperationLine> StartServices(
+        IEnumerable<ServiceRuntimeTarget> targets,
+        bool dryRun)
+        => ChangeServiceRunningState(targets, desiredRunning: true, dryRun);
 
-    public static List<OperationLine> ApplyStartModeTargets(IEnumerable<ServiceStartModeTarget> targets, bool dryRun)
+    public static List<OperationLine> ApplyStartModeTargets(
+        IEnumerable<ServiceStartModeTarget> targets,
+        bool dryRun)
     {
         var requestedTargets = targets
+            .Where(target => !string.IsNullOrWhiteSpace(target.Name))
             .DistinctBy(target => target.Name, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(target => target.Name, StringComparer.OrdinalIgnoreCase);
 
         if (requestedTargets.Count == 0)
-        {
-            return
-            [
-                LocalizedLine.Info("manager.services.nothingToChange")
-            ];
-        }
+            return [LocalizedLine.Info("manager.services.nothingToChange")];
 
-        var currentServices = QueryServices(Array.Empty<string>())
+        var currentServices = QueryServices([])
             .Where(service => requestedTargets.ContainsKey(service.Name))
-            .ToDictionary(service => service.Name, service => service, StringComparer.OrdinalIgnoreCase);
-
-        var operationLines = new List<OperationLine>();
+            .ToDictionary(service => service.Name, StringComparer.OrdinalIgnoreCase);
+        var lines = new List<OperationLine>();
 
         foreach (var (serviceName, target) in requestedTargets.OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase))
         {
-            var desiredStartMode = NormalizeStartMode(target.DesiredStartMode);
             if (!currentServices.TryGetValue(serviceName, out var currentService))
             {
-                operationLines.Add(LocalizedLine.Warn("manager.services.notFound", serviceName));
+                lines.Add(LocalizedLine.Warn("manager.services.notFound", serviceName));
+                continue;
+            }
+
+            if (!TargetIdentityMatcher.ServiceMatches(currentService, target.ExpectedPathName))
+            {
+                lines.Add(LocalizedLine.Err("manager.services.identityChanged", serviceName));
                 continue;
             }
 
             if (StartModeMatches(currentService, target))
             {
-                operationLines.Add(LocalizedLine.Info("manager.services.alreadySet", serviceName, FormatTarget(target)));
+                lines.Add(LocalizedLine.Info("manager.services.alreadySet", serviceName, FormatTarget(target)));
                 continue;
             }
 
             if (dryRun)
             {
-                operationLines.Add(LocalizedLine.Ok(
+                lines.Add(LocalizedLine.Ok(
                     "manager.services.wouldSet",
                     serviceName,
                     FormatTarget(target),
@@ -126,64 +116,18 @@ public static class ServiceManager
                 continue;
             }
 
-            try
+            if (TryApplyWithSc(target, out var error))
             {
-                using var serviceObject = new ManagementObject(
-                    $"Win32_Service.Name='{EscapeWmiKey(serviceName)}'");
-                var wmiResult = serviceObject.InvokeMethod("ChangeStartMode", new object[] { desiredStartMode });
-                var wmiReturnCode = ConvertToWmiReturnCode(wmiResult);
-
-                if (wmiReturnCode == 0)
-                {
-                    if (ApplyDelayedAutoStartIfNeeded(target, out var delayedError))
-                    {
-                        operationLines.Add(LocalizedLine.Ok("manager.services.set", serviceName, FormatTarget(target)));
-                        continue;
-                    }
-
-                    operationLines.Add(LocalizedLine.Err(
-                        "manager.services.failedWithException",
-                        serviceName,
-                        "Delayed-auto configuration failed.",
-                        delayedError));
-                    continue;
-                }
-
-                var fallbackApplied = TryApplyWithSc(target, out var fallbackError);
-                operationLines.Add(fallbackApplied
-                    ? LocalizedLine.Warn("manager.services.wmiFallbackApplied", wmiReturnCode, serviceName)
-                    : LocalizedLine.Err("manager.services.failedWithReturnCode", serviceName, wmiReturnCode, fallbackError));
+                lines.Add(LocalizedLine.Ok("manager.services.set", serviceName, FormatTarget(target)));
+                continue;
             }
-            catch (Exception exception)
-            {
-                var fallbackApplied = TryApplyWithSc(target, out var fallbackError);
-                operationLines.Add(fallbackApplied
-                    ? LocalizedLine.Warn("manager.services.exceptionFallbackApplied", serviceName)
-                    : LocalizedLine.Err("manager.services.failedWithException", serviceName, exception.Message, fallbackError));
-            }
+
+            lines.Add(ServiceReachedStartMode(target)
+                ? LocalizedLine.Info("manager.services.alreadySet", serviceName, FormatTarget(target))
+                : LocalizedLine.Err("manager.services.failedToSet", serviceName, error));
         }
 
-        return operationLines;
-    }
-
-    private static bool TryApplyWithSc(ServiceStartModeTarget target, out string error)
-    {
-        var normalizedMode = NormalizeStartMode(target.DesiredStartMode);
-        var scMode = normalizedMode switch
-        {
-            "Manual" => "demand",
-            "Automatic" when target.DelayedAutoStart => "delayed-auto",
-            "Automatic" => "auto",
-            "Disabled" => "disabled",
-            _ => throw new ArgumentOutOfRangeException(nameof(target), target.DesiredStartMode, "Unsupported service mode.")
-        };
-
-        return PowerShellRunner.TryRun(
-            WindowsPaths.GetSystemExecutable("sc.exe"),
-            $"config \"{target.Name}\" start= {scMode}",
-            out _,
-            out error,
-            20_000);
+        return lines;
     }
 
     public static string NormalizeStartMode(string startMode)
@@ -199,6 +143,226 @@ public static class ServiceManager
             _ => startMode.Trim()
         };
 
+    private static List<OperationLine> ChangeServiceRunningState(
+        IEnumerable<ServiceRuntimeTarget> targets,
+        bool desiredRunning,
+        bool dryRun)
+    {
+        var requestedTargets = targets
+            .Where(target => !string.IsNullOrWhiteSpace(target.Name))
+            .DistinctBy(target => target.Name, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(target => target.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (requestedTargets.Count == 0)
+            return [LocalizedLine.Info("manager.services.nothingToChange")];
+
+        var currentServices = QueryServices([])
+            .ToDictionary(service => service.Name, StringComparer.OrdinalIgnoreCase);
+        var lines = new List<OperationLine>();
+
+        foreach (var target in requestedTargets)
+        {
+            if (!currentServices.TryGetValue(target.Name, out var service))
+            {
+                lines.Add(LocalizedLine.Warn("manager.services.notFound", target.Name));
+                continue;
+            }
+
+            if (!TargetIdentityMatcher.ServiceMatches(service, target.ExpectedPathName))
+            {
+                lines.Add(LocalizedLine.Err("manager.services.identityChanged", target.Name));
+                continue;
+            }
+
+            var desiredState = desiredRunning ? "Running" : "Stopped";
+            if (service.State.Equals(desiredState, StringComparison.OrdinalIgnoreCase))
+            {
+                lines.Add(LocalizedLine.Info(
+                    desiredRunning ? "manager.services.alreadyRunning" : "manager.services.alreadyStopped",
+                    target.Name));
+                continue;
+            }
+
+            if (dryRun)
+            {
+                lines.Add(LocalizedLine.Ok(
+                    desiredRunning ? "manager.services.wouldStart" : "manager.services.wouldStop",
+                    target.Name));
+                continue;
+            }
+
+            if (!TryChangeRunningStateWithSc(target.Name, desiredRunning, out var commandError))
+            {
+                var reachedDesiredState = WaitForServiceState(
+                                              target.Name,
+                                              desiredRunning,
+                                              out var commandFailureWaitError) &&
+                                          ServiceIdentityStillMatches(target);
+                lines.Add(reachedDesiredState
+                    ? LocalizedLine.Info(
+                        desiredRunning ? "manager.services.alreadyRunning" : "manager.services.alreadyStopped",
+                        target.Name)
+                    : LocalizedLine.Err(
+                        desiredRunning ? "manager.services.failedToStart" : "manager.services.failedToStop",
+                        target.Name,
+                        CombineErrors(commandError, commandFailureWaitError)));
+                continue;
+            }
+
+            lines.Add(WaitForServiceState(target.Name, desiredRunning, out var waitError)
+                ? LocalizedLine.Ok(
+                    desiredRunning ? "manager.services.started" : "manager.services.stopped",
+                    target.Name)
+                : LocalizedLine.Err(
+                    desiredRunning ? "manager.services.startTimeout" : "manager.services.stopTimeout",
+                    target.Name,
+                    waitError));
+        }
+
+        return lines;
+    }
+
+    private static bool TryApplyWithSc(ServiceStartModeTarget target, out string error)
+    {
+        var normalizedMode = NormalizeStartMode(target.DesiredStartMode);
+        var scMode = normalizedMode switch
+        {
+            "Manual" => "demand",
+            "Automatic" when target.DelayedAutoStart => "delayed-auto",
+            "Automatic" => "auto",
+            "Disabled" => "disabled",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(target),
+                target.DesiredStartMode,
+                "Unsupported service mode.")
+        };
+
+        return PowerShellRunner.TryRun(
+            WindowsPaths.GetSystemExecutable("sc.exe"),
+            ["config", target.Name, "start=", scMode],
+            out _,
+            out error,
+            CommandTimeoutMilliseconds);
+    }
+
+    private static bool TryChangeRunningStateWithSc(
+        string serviceName,
+        bool desiredRunning,
+        out string error)
+        => PowerShellRunner.TryRun(
+            WindowsPaths.GetSystemExecutable("sc.exe"),
+            [desiredRunning ? "start" : "stop", serviceName],
+            out _,
+            out error,
+            CommandTimeoutMilliseconds);
+
+    private static bool WaitForServiceState(
+        string serviceName,
+        bool desiredRunning,
+        out string error)
+    {
+        var escapedServiceName = EscapePowerShellLiteral(serviceName);
+        var desiredState = desiredRunning ? "Running" : "Stopped";
+        var script = $$"""
+$ErrorActionPreference = 'Stop'
+$service = Get-Service -Name '{{escapedServiceName}}' -ErrorAction Stop
+$desired = [System.ServiceProcess.ServiceControllerStatus]::{{desiredState}}
+$service.WaitForStatus($desired, [TimeSpan]::FromSeconds(15))
+$service.Refresh()
+if ($service.Status -ne $desired) {
+    throw "Service did not reach {{desiredState}} state."
+}
+""";
+
+        return PowerShellRunner.TryRunScript(
+            script,
+            out _,
+            out error,
+            StateWaitTimeoutMilliseconds);
+    }
+
+    private static bool TryQueryAllServices(out List<ServiceItem> services, out string error)
+    {
+        const string script = """
+$ErrorActionPreference = 'Stop'
+$result = @(
+    Get-CimInstance -ClassName Win32_Service -ErrorAction Stop |
+        ForEach-Object {
+            [PSCustomObject]@{
+                Name = [string]$_.Name
+                DisplayName = [string]$_.DisplayName
+                StartMode = [string]$_.StartMode
+                State = [string]$_.State
+                PathName = [string]$_.PathName
+                DelayedAutoStart = [bool]$_.DelayedAutoStart
+            }
+        }
+)
+ConvertTo-Json -InputObject $result -Compress
+""";
+
+        if (!PowerShellRunner.TryRunScript(
+                script,
+                out var output,
+                out error,
+                DiscoveryTimeoutMilliseconds))
+        {
+            services = [];
+            return false;
+        }
+
+        try
+        {
+            services = DeserializeServices(output);
+            error = string.Empty;
+            return true;
+        }
+        catch (Exception exception)
+        {
+            services = [];
+            error = exception.Message;
+            return false;
+        }
+    }
+
+    private static bool ServiceReachedStartMode(ServiceStartModeTarget target)
+        => TryQueryAllServices(out var services, out _) &&
+           services.FirstOrDefault(service =>
+               service.Name.Equals(target.Name, StringComparison.OrdinalIgnoreCase)) is { } service &&
+           TargetIdentityMatcher.ServiceMatches(service, target.ExpectedPathName) &&
+           StartModeMatches(service, target);
+
+    private static bool ServiceIdentityStillMatches(ServiceRuntimeTarget target)
+        => TryQueryAllServices(out var services, out _) &&
+           services.FirstOrDefault(service =>
+               service.Name.Equals(target.Name, StringComparison.OrdinalIgnoreCase)) is { } service &&
+           TargetIdentityMatcher.ServiceMatches(service, target.ExpectedPathName);
+
+    private static string CombineErrors(string first, string second)
+        => string.Join(
+            "; ",
+            new[] { first, second }.Where(value => !string.IsNullOrWhiteSpace(value)));
+
+    private static List<ServiceItem> DeserializeServices(string json)
+    {
+        using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "[]" : json);
+        var elements = document.RootElement.ValueKind switch
+        {
+            JsonValueKind.Array => document.RootElement.EnumerateArray().ToList(),
+            JsonValueKind.Object => [document.RootElement],
+            _ => []
+        };
+
+        return elements.Select(element => new ServiceItem(
+            ReadString(element, "Name"),
+            ReadString(element, "DisplayName"),
+            ReadString(element, "StartMode"),
+            ReadString(element, "State"),
+            ReadString(element, "PathName"),
+            ReadBoolean(element, "DelayedAutoStart"))).ToList();
+    }
+
     private static bool StartModeMatches(ServiceItem currentService, ServiceStartModeTarget target)
     {
         var currentMode = NormalizeStartMode(currentService.StartMode);
@@ -208,133 +372,21 @@ public static class ServiceManager
                 currentService.DelayedAutoStart == target.DelayedAutoStart);
     }
 
-    private static bool ApplyDelayedAutoStartIfNeeded(ServiceStartModeTarget target, out string error)
-    {
-        if (!NormalizeStartMode(target.DesiredStartMode).Equals("Automatic", StringComparison.OrdinalIgnoreCase))
-        {
-            error = string.Empty;
-            return true;
-        }
-
-        return TryApplyWithSc(target, out error);
-    }
-
     private static string FormatTarget(ServiceStartModeTarget target)
         => NormalizeStartMode(target.DesiredStartMode) == "Automatic" && target.DelayedAutoStart
             ? "Automatic (Delayed Start)"
             : NormalizeStartMode(target.DesiredStartMode);
 
-    private static string EscapeWmiKey(string value)
-        => value.Replace("\\", "\\\\", StringComparison.Ordinal)
-            .Replace("'", "\\'", StringComparison.Ordinal);
+    private static string EscapePowerShellLiteral(string value)
+        => value.Replace("'", "''", StringComparison.Ordinal);
 
-    private static uint ConvertToWmiReturnCode(object? result)
-    {
-        try
-        {
-            return result is null
-                ? uint.MaxValue
-                : Convert.ToUInt32(result, System.Globalization.CultureInfo.InvariantCulture);
-        }
-        catch
-        {
-            return uint.MaxValue;
-        }
-    }
+    private static string ReadString(JsonElement element, string propertyName)
+        => element.TryGetProperty(propertyName, out var property)
+            ? property.GetString() ?? string.Empty
+            : string.Empty;
 
-    private static List<OperationLine> ChangeServiceRunningState(
-        IEnumerable<string> serviceNames,
-        bool desiredRunning,
-        bool dryRun)
-    {
-        var requestedNames = serviceNames
-            .Where(name => !string.IsNullOrWhiteSpace(name))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (requestedNames.Count == 0)
-            return [LocalizedLine.Info("manager.services.nothingToChange")];
-
-        var currentServices = QueryServices([])
-            .ToDictionary(service => service.Name, StringComparer.OrdinalIgnoreCase);
-        var lines = new List<OperationLine>();
-
-        foreach (var serviceName in requestedNames)
-        {
-            if (!currentServices.TryGetValue(serviceName, out var service))
-            {
-                lines.Add(LocalizedLine.Err("manager.services.notFound", serviceName));
-                continue;
-            }
-
-            var alreadyInDesiredState = desiredRunning
-                ? service.State.Equals("Running", StringComparison.OrdinalIgnoreCase)
-                : service.State.Equals("Stopped", StringComparison.OrdinalIgnoreCase);
-            if (alreadyInDesiredState)
-            {
-                lines.Add(LocalizedLine.Info(
-                    desiredRunning ? "manager.services.alreadyRunning" : "manager.services.alreadyStopped",
-                    serviceName));
-                continue;
-            }
-
-            if (dryRun)
-            {
-                lines.Add(LocalizedLine.Ok(
-                    desiredRunning ? "manager.services.wouldStart" : "manager.services.wouldStop",
-                    serviceName));
-                continue;
-            }
-
-            var command = desiredRunning ? "start" : "stop";
-            var succeeded = PowerShellRunner.TryRun(
-                WindowsPaths.GetSystemExecutable("sc.exe"),
-                $"{command} \"{serviceName}\"",
-                out _,
-                out var error,
-                20_000);
-
-            if (!succeeded)
-            {
-                lines.Add(LocalizedLine.Err(
-                    desiredRunning ? "manager.services.failedToStart" : "manager.services.failedToStop",
-                    serviceName,
-                    error));
-                continue;
-            }
-
-            var reachedState = WaitForServiceState(serviceName, desiredRunning, TimeSpan.FromSeconds(15));
-            lines.Add(reachedState
-                ? LocalizedLine.Ok(
-                    desiredRunning ? "manager.services.started" : "manager.services.stopped",
-                    serviceName)
-                : LocalizedLine.Err(
-                    desiredRunning ? "manager.services.startTimeout" : "manager.services.stopTimeout",
-                    serviceName));
-        }
-
-        return lines;
-    }
-
-    private static bool WaitForServiceState(string serviceName, bool desiredRunning, TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        do
-        {
-            var service = QueryServices([])
-                .FirstOrDefault(item => item.Name.Equals(serviceName, StringComparison.OrdinalIgnoreCase));
-            var reachedDesiredState = desiredRunning
-                ? service?.State.Equals("Running", StringComparison.OrdinalIgnoreCase) == true
-                : service?.State.Equals("Stopped", StringComparison.OrdinalIgnoreCase) == true;
-
-            if (reachedDesiredState)
-                return true;
-
-            Thread.Sleep(250);
-        }
-        while (DateTime.UtcNow < deadline);
-
-        return false;
-    }
+    private static bool ReadBoolean(JsonElement element, string propertyName)
+        => element.TryGetProperty(propertyName, out var property) &&
+           property.ValueKind is JsonValueKind.True or JsonValueKind.False &&
+           property.GetBoolean();
 }

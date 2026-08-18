@@ -52,6 +52,7 @@ public sealed class FirewallProtectionStatusTests
             string.Empty);
 
         Assert.True(status.IsComplete);
+        Assert.True(status.IsReconciled);
     }
 
     [Fact]
@@ -131,6 +132,42 @@ public sealed class FirewallProtectionStatusTests
             EnforcementDetails: "Public");
 
         Assert.False(status.IsComplete);
+    }
+
+    [Fact]
+    public void IsReconciled_ShouldRejectObsoleteRulesWithoutWeakeningActiveProtection()
+    {
+        var status = new FirewallProtectionStatus(
+            true,
+            CreateTargets(),
+            [
+                new FirewallRuleInfo("program", true, true, true, CurrentExecutable, string.Empty),
+                new FirewallRuleInfo("package", true, true, true, string.Empty, PackageSid),
+                new FirewallRuleInfo("old", true, true, true, @"C:\WindowsApps\Omen\v1\Omen.exe", string.Empty)
+            ],
+            [],
+            [@"C:\WindowsApps\Omen\v1\Omen.exe"],
+            true,
+            string.Empty);
+
+        Assert.True(status.IsComplete);
+        Assert.False(status.IsReconciled);
+    }
+
+    [Fact]
+    public void DerivedTargetCollections_ShouldReflectRecordCloneChanges()
+    {
+        var original = CreateTargets();
+
+        var updated = original with
+        {
+            ExternalExecutables = new HashSet<string>([@"C:\HP\OmenHelper.exe"]),
+            DiscoveryErrors = ["scan failed"]
+        };
+
+        Assert.Contains(@"C:\HP\OmenHelper.exe", updated.AllExecutables);
+        Assert.Equal(["scan failed"], updated.ScanErrors);
+        Assert.False(updated.DiscoveryComplete);
     }
 
     private static FirewallTargetSet CreateTargets(string packageSid = PackageSid)

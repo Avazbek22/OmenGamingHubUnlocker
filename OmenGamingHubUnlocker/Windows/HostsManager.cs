@@ -24,6 +24,8 @@ public sealed record HostsInspection(
 /// </summary>
 public static class HostsManager
 {
+    private const int MaximumWriteAttempts = 3;
+
     public static (bool ok, string details) CheckWriteAccess(string marker)
     {
         _ = marker;
@@ -88,78 +90,103 @@ public static class HostsManager
         IEnumerable<string> domains,
         string marker,
         bool dryRun)
+        => ActivateHostsBlockAtPath(
+            hostsFilePath,
+            domains,
+            marker,
+            dryRun,
+            beforeCommit: null);
+
+    internal static List<OperationLine> ActivateHostsBlockAtPath(
+        string hostsFilePath,
+        IEnumerable<string> domains,
+        string marker,
+        bool dryRun,
+        Action<int>? beforeCommit)
     {
         if (!File.Exists(hostsFilePath))
             return [LocalizedLine.Err("manager.hosts.fileNotFound", hostsFilePath)];
-
-        HostsDocument document;
-        try
-        {
-            document = ReadDocument(hostsFilePath);
-        }
-        catch (Exception exception)
-        {
-            return [LocalizedLine.Err("manager.hosts.cannotRead", exception.Message)];
-        }
 
         var normalizedDomains = domains
             .Where(domain => !string.IsNullOrWhiteSpace(domain))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var missingDomains = normalizedDomains
-            .Where(domain => !document.Lines.Any(line => IsBlockedDomainLine(line, domain)))
-            .ToList();
 
-        if (missingDomains.Count == 0)
-            return [LocalizedLine.Info("manager.hosts.nothingToAdd")];
+        for (var attempt = 1; attempt <= MaximumWriteAttempts; attempt++)
+        {
+            if (!TryReadDocument(hostsFilePath, out var document, out var readError))
+                return [LocalizedLine.Err("manager.hosts.cannotRead", readError)];
 
-        var lines = missingDomains
-            .Select(domain => $"127.0.0.1\t{domain}\t{marker}")
-            .ToList();
+            var missingDomains = normalizedDomains
+                .Where(domain => !document.Lines.Any(line => IsBlockedDomainLine(line, domain)))
+                .ToList();
+            if (missingDomains.Count == 0)
+                return [LocalizedLine.Info("manager.hosts.nothingToAdd")];
 
-        if (dryRun)
-            return lines.Select(line => LocalizedLine.Ok("manager.hosts.wouldAdd", line)).ToList();
+            var managedLines = missingDomains
+                .Select(domain => $"127.0.0.1\t{domain}\t{marker}")
+                .ToList();
+            if (dryRun)
+                return managedLines.Select(line => LocalizedLine.Ok("manager.hosts.wouldAdd", line)).ToList();
 
-        var updatedLines = document.Lines.Concat(lines).ToList();
-        if (!TryWriteDocumentAtomically(hostsFilePath, document, updatedLines, out var writeError))
-            return [LocalizedLine.Err("manager.hosts.failedToWrite", writeError)];
+            var updatedLines = document.Lines.Concat(managedLines).ToList();
+            beforeCommit?.Invoke(attempt);
+            var commitResult = TryWriteDocumentAtomically(
+                hostsFilePath,
+                document,
+                updatedLines,
+                out var writeError);
+            if (commitResult == HostsCommitResult.Success)
+                return managedLines.Select(line => LocalizedLine.Ok("manager.hosts.added", line)).ToList();
+            if (commitResult == HostsCommitResult.Failed)
+                return [LocalizedLine.Err("manager.hosts.failedToWrite", writeError)];
+        }
 
-        return lines.Select(line => LocalizedLine.Ok("manager.hosts.added", line)).ToList();
+        return [LocalizedLine.Err("manager.hosts.concurrentUpdate")];
     }
 
     public static List<OperationLine> DisableHostsBlock(string marker, bool dryRun)
         => DisableHostsBlockAtPath(WindowsPaths.HostsPath, marker, dryRun);
 
     public static List<OperationLine> DisableHostsBlockAtPath(string hostsFilePath, string marker, bool dryRun)
+        => DisableHostsBlockAtPath(hostsFilePath, marker, dryRun, beforeCommit: null);
+
+    internal static List<OperationLine> DisableHostsBlockAtPath(
+        string hostsFilePath,
+        string marker,
+        bool dryRun,
+        Action<int>? beforeCommit)
     {
         if (!File.Exists(hostsFilePath))
             return [LocalizedLine.Err("manager.hosts.fileNotFound", hostsFilePath)];
 
-        HostsDocument document;
-        try
+        for (var attempt = 1; attempt <= MaximumWriteAttempts; attempt++)
         {
-            document = ReadDocument(hostsFilePath);
+            if (!TryReadDocument(hostsFilePath, out var document, out var readError))
+                return [LocalizedLine.Err("manager.hosts.cannotRead", readError)];
+
+            var remainingLines = document.Lines
+                .Where(line => !line.Contains(marker, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var removedLineCount = document.Lines.Count - remainingLines.Count;
+            if (removedLineCount == 0)
+                return [LocalizedLine.Info("manager.hosts.noMarkerLines")];
+            if (dryRun)
+                return [LocalizedLine.Ok("manager.hosts.wouldRemove", removedLineCount, marker)];
+
+            beforeCommit?.Invoke(attempt);
+            var commitResult = TryWriteDocumentAtomically(
+                hostsFilePath,
+                document,
+                remainingLines,
+                out var writeError);
+            if (commitResult == HostsCommitResult.Success)
+                return [LocalizedLine.Ok("manager.hosts.removed", removedLineCount)];
+            if (commitResult == HostsCommitResult.Failed)
+                return [LocalizedLine.Err("manager.hosts.failedToWrite", writeError)];
         }
-        catch (Exception exception)
-        {
-            return [LocalizedLine.Err("manager.hosts.cannotRead", exception.Message)];
-        }
 
-        var remainingLines = document.Lines
-            .Where(line => !line.Contains(marker, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-        var removedLineCount = document.Lines.Count - remainingLines.Count;
-
-        if (removedLineCount == 0)
-            return [LocalizedLine.Info("manager.hosts.noMarkerLines")];
-
-        if (dryRun)
-            return [LocalizedLine.Ok("manager.hosts.wouldRemove", removedLineCount, marker)];
-
-        if (!TryWriteDocumentAtomically(hostsFilePath, document, remainingLines, out var writeError))
-            return [LocalizedLine.Err("manager.hosts.failedToWrite", writeError)];
-
-        return [LocalizedLine.Ok("manager.hosts.removed", removedLineCount)];
+        return [LocalizedLine.Err("manager.hosts.concurrentUpdate")];
     }
 
     public static bool IsBlockedDomainLine(string? line, string domain)
@@ -199,7 +226,31 @@ public static class HostsManager
         if (endsWithNewLine && lines.Count > 0 && lines[^1].Length == 0)
             lines.RemoveAt(lines.Count - 1);
 
-        return new HostsDocument(lines, encoding, newLine, endsWithNewLine);
+        return new HostsDocument(
+            lines,
+            encoding,
+            newLine,
+            endsWithNewLine,
+            System.Security.Cryptography.SHA256.HashData(bytes));
+    }
+
+    private static bool TryReadDocument(
+        string path,
+        out HostsDocument document,
+        out string error)
+    {
+        try
+        {
+            document = ReadDocument(path);
+            error = string.Empty;
+            return true;
+        }
+        catch (Exception exception)
+        {
+            document = HostsDocument.Empty;
+            error = exception.Message;
+            return false;
+        }
     }
 
     private static (Encoding Encoding, int PreambleLength) DetectEncoding(byte[] bytes)
@@ -239,7 +290,7 @@ public static class HostsManager
         }
     }
 
-    private static bool TryWriteDocumentAtomically(
+    private static HostsCommitResult TryWriteDocumentAtomically(
         string path,
         HostsDocument original,
         List<string> lines,
@@ -249,7 +300,7 @@ public static class HostsManager
         if (string.IsNullOrWhiteSpace(directory))
         {
             error = "The hosts directory path is invalid.";
-            return false;
+            return HostsCommitResult.Failed;
         }
 
         var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
@@ -259,15 +310,37 @@ public static class HostsManager
             if (original.EndsWithNewLine && lines.Count > 0)
                 content += original.NewLine;
 
-            File.WriteAllText(temporaryPath, content, original.Encoding);
-            File.Replace(temporaryPath, path, destinationBackupFileName: null, ignoreMetadataErrors: true);
+            using (var stream = new FileStream(
+                       temporaryPath,
+                       FileMode.CreateNew,
+                       FileAccess.Write,
+                       FileShare.None,
+                       bufferSize: 4096,
+                       FileOptions.WriteThrough))
+            using (var writer = new StreamWriter(stream, original.Encoding))
+            {
+                writer.Write(content);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+
+            var currentHash = System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path));
+            if (!System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+                    currentHash,
+                    original.ContentHash))
+            {
+                error = Text.Get("manager.hosts.concurrentUpdate");
+                return HostsCommitResult.Conflict;
+            }
+
+            File.Replace(temporaryPath, path, destinationBackupFileName: null, ignoreMetadataErrors: false);
             error = string.Empty;
-            return true;
+            return HostsCommitResult.Success;
         }
         catch (Exception exception)
         {
             error = exception.Message;
-            return false;
+            return HostsCommitResult.Failed;
         }
         finally
         {
@@ -299,5 +372,21 @@ public static class HostsManager
         List<string> Lines,
         Encoding Encoding,
         string NewLine,
-        bool EndsWithNewLine);
+        bool EndsWithNewLine,
+        byte[] ContentHash)
+    {
+        public static HostsDocument Empty { get; } = new(
+            [],
+            Encoding.UTF8,
+            Environment.NewLine,
+            false,
+            []);
+    }
+
+    private enum HostsCommitResult
+    {
+        Success,
+        Conflict,
+        Failed
+    }
 }

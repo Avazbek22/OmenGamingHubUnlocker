@@ -12,7 +12,7 @@ public sealed class AppInfo
     private const string Windows11Label = "Windows 11";
 
     public const string AppName = "OmenGamingHubUnlocker";
-    public const string AppDisplayVersion = "3.2";
+    public const string AppDisplayVersion = "3.3";
     public const string AppVersionTag = "v" + AppDisplayVersion;
     public const string AppDisplayName = AppName + " " + AppVersionTag;
     public const string SupportUrl = "https://boosty.to/avazbek22";

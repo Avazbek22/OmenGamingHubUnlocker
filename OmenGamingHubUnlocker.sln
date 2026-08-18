@@ -6,6 +6,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tests", "Tests", "{0AB3BF05
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OmenGamingHubUnlocker.Tests", "Tests\OmenGamingHubUnlocker.Tests\OmenGamingHubUnlocker.Tests.csproj", "{C0A970FD-F236-4D5B-B601-DE3DBB2523CC}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OmenGamingHubUnlocker.E2EHost", "Tests\OmenGamingHubUnlocker.E2EHost\OmenGamingHubUnlocker.E2EHost.csproj", "{E8A90858-4F53-4E68-B971-6DCC6E19C0A7}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -40,11 +42,24 @@ Global
 		{C0A970FD-F236-4D5B-B601-DE3DBB2523CC}.Release|x64.Build.0 = Release|Any CPU
 		{C0A970FD-F236-4D5B-B601-DE3DBB2523CC}.Release|x86.ActiveCfg = Release|Any CPU
 		{C0A970FD-F236-4D5B-B601-DE3DBB2523CC}.Release|x86.Build.0 = Release|Any CPU
+		{E8A90858-4F53-4E68-B971-6DCC6E19C0A7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E8A90858-4F53-4E68-B971-6DCC6E19C0A7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E8A90858-4F53-4E68-B971-6DCC6E19C0A7}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{E8A90858-4F53-4E68-B971-6DCC6E19C0A7}.Debug|x64.Build.0 = Debug|Any CPU
+		{E8A90858-4F53-4E68-B971-6DCC6E19C0A7}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{E8A90858-4F53-4E68-B971-6DCC6E19C0A7}.Debug|x86.Build.0 = Debug|Any CPU
+		{E8A90858-4F53-4E68-B971-6DCC6E19C0A7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E8A90858-4F53-4E68-B971-6DCC6E19C0A7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E8A90858-4F53-4E68-B971-6DCC6E19C0A7}.Release|x64.ActiveCfg = Release|Any CPU
+		{E8A90858-4F53-4E68-B971-6DCC6E19C0A7}.Release|x64.Build.0 = Release|Any CPU
+		{E8A90858-4F53-4E68-B971-6DCC6E19C0A7}.Release|x86.ActiveCfg = Release|Any CPU
+		{E8A90858-4F53-4E68-B971-6DCC6E19C0A7}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{C0A970FD-F236-4D5B-B601-DE3DBB2523CC} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{E8A90858-4F53-4E68-B971-6DCC6E19C0A7} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

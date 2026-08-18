@@ -171,9 +171,9 @@ The script runs the test suite and produces self-contained single-file executabl
 
 Version properties have distinct purposes and are validated before every release:
 
-- `InformationalVersion` is the public GitHub version used by tags and artifact names, e.g. `3.2`.
-- `Version` is the .NET build version, e.g. `3.2.0`.
-- `FileVersion` and `AssemblyVersion` are the four-part Windows and WinGet version, e.g. `3.2.0.0`.
+- `InformationalVersion` is the public GitHub version used by tags and artifact names, e.g. `3.3`.
+- `Version` is the .NET build version, e.g. `3.3.0`.
+- `FileVersion` and `AssemblyVersion` are the four-part Windows and WinGet version, e.g. `3.3.0.0`.
 
 The script stops if these values don't describe the same release.
 

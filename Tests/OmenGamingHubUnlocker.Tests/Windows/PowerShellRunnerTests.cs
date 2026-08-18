@@ -54,6 +54,23 @@ public sealed class PowerShellRunnerTests
         var (ok, details) = PowerShellRunner.CheckAvailability();
 
         Assert.False(string.IsNullOrWhiteSpace(details));
-        Assert.True(ok || !ok);
+        Assert.Equal(File.Exists(WindowsPaths.WindowsPowerShell), ok);
+    }
+
+    [Fact]
+    public void TryRunArgumentList_ShouldPreserveShellMetacharactersAsLiteralData()
+    {
+        const string argument = "OMEN value & whoami | ignored; 'quoted' \"double quoted\" %PATH%";
+
+        var succeeded = PowerShellRunner.TryRun(
+            E2EHostRunner.ExecutablePath,
+            ["echo-argument", argument],
+            out var output,
+            out var error,
+            5_000);
+
+        Assert.True(succeeded, error);
+        Assert.Equal(argument, output);
+        Assert.Equal(string.Empty, error);
     }
 }

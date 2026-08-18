@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\OmenGamingHubUnlocker\OmenGamingHubUnlocker.csproj" />
+    <ProjectReference Include="..\OmenGamingHubUnlocker.E2EHost\OmenGamingHubUnlocker.E2EHost.csproj" />
   </ItemGroup>
 
 </Project>

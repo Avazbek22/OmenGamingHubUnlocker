@@ -75,11 +75,10 @@ public static class RegistryRunManager
                 {
                     foreach (var entry in entryGroup)
                     {
-                        operationLines.Add(new OperationLine
-                        {
-                            Level = "WARN",
-                            Text = Text.Format("manager.registry.keyNotFound", entry.Location, entry.Name)
-                        });
+                        operationLines.Add(LocalizedLine.Info(
+                            "manager.registry.alreadyAbsent",
+                            entry.Location,
+                            entry.Name));
                     }
 
                     continue;
@@ -87,6 +86,33 @@ public static class RegistryRunManager
 
                 foreach (var entry in entryGroup)
                 {
+                    var valueExists = runKey.GetValueNames()
+                        .Contains(entry.Name, StringComparer.OrdinalIgnoreCase);
+                    if (!valueExists)
+                    {
+                        operationLines.Add(LocalizedLine.Info(
+                            "manager.registry.alreadyAbsent",
+                            entry.Location,
+                            entry.Name));
+                        continue;
+                    }
+
+                    var currentValue = runKey.GetValue(
+                            entry.Name,
+                            defaultValue: string.Empty,
+                            RegistryValueOptions.DoNotExpandEnvironmentNames)
+                        ?.ToString() ?? string.Empty;
+                    var currentKind = runKey.GetValueKind(entry.Name);
+                    if (!currentValue.Equals(entry.Value, StringComparison.Ordinal) ||
+                        currentKind != entry.ValueKind)
+                    {
+                        operationLines.Add(LocalizedLine.Err(
+                            "manager.registry.removeConflict",
+                            entry.Location,
+                            entry.Name));
+                        continue;
+                    }
+
                     if (dryRun)
                     {
                         operationLines.Add(new OperationLine
@@ -109,7 +135,7 @@ public static class RegistryRunManager
             {
                 operationLines.Add(new OperationLine
                 {
-                    Level = "WARN",
+                    Level = "ERR",
                     Text = Text.Format("manager.registry.failedIn", FormatLocation(entryGroup.Key.Hive, entryGroup.Key.View), exception.Message)
                 });
             }

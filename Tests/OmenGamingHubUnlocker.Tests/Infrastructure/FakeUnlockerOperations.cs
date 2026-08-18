@@ -13,6 +13,8 @@ internal sealed class FakeUnlockerOperations : IUnlockerOperations
     public List<bool> FirewallCleanupRequests { get; } = [];
     public Queue<Action<FakeUnlockerOperations>> TargetDiscoverySteps { get; } = [];
     public Queue<Action<FakeUnlockerOperations>> FirewallInspectionSteps { get; } = [];
+    public Queue<Action<FakeUnlockerOperations>> TaskQuerySteps { get; } = [];
+    public Queue<Action<FakeUnlockerOperations>> ProcessQuerySteps { get; } = [];
 
     public AppxPackageInfo? Package { get; set; } = new(
         OmenTargets.PrimaryAppxPackageName,
@@ -44,6 +46,9 @@ internal sealed class FakeUnlockerOperations : IUnlockerOperations
     public IReadOnlyList<ProcessItem> QueryTargetProcesses()
     {
         Calls.Add("QueryProcesses");
+        if (ProcessQuerySteps.TryDequeue(out var queryStep))
+            queryStep(this);
+
         return Processes.ToList();
     }
 
@@ -59,6 +64,9 @@ internal sealed class FakeUnlockerOperations : IUnlockerOperations
     public IReadOnlyList<TaskItem> QueryTargetTasks()
     {
         Calls.Add("QueryTasks");
+        if (TaskQuerySteps.TryDequeue(out var queryStep))
+            queryStep(this);
+
         return Tasks.ToList();
     }
 
@@ -124,12 +132,22 @@ internal sealed class FakeUnlockerOperations : IUnlockerOperations
         if (dryRun)
             return [Ok("Would set service modes")];
 
+        var lines = new List<OperationLine>();
         foreach (var target in targets)
         {
             var index = Services.FindIndex(service =>
                 service.Name.Equals(target.Name, StringComparison.OrdinalIgnoreCase));
             if (index < 0)
+            {
+                lines.Add(Warn("Service no longer exists"));
                 continue;
+            }
+
+            if (!TargetIdentityMatcher.ServiceMatches(Services[index], target.ExpectedPathName))
+            {
+                lines.Add(Error("Service identity changed"));
+                continue;
+            }
 
             if (FailServiceRestore && !target.DesiredStartMode.Equals("Manual", StringComparison.OrdinalIgnoreCase))
                 continue;
@@ -139,27 +157,26 @@ internal sealed class FakeUnlockerOperations : IUnlockerOperations
                 StartMode = target.DesiredStartMode,
                 DelayedAutoStart = target.DelayedAutoStart
             };
+            lines.Add(Ok("Service mode set"));
         }
 
-        return [Ok("Service modes set")];
+        return lines.Count == 0 ? [Ok("No service modes changed")] : lines;
     }
 
-    public IReadOnlyList<OperationLine> StopServices(IEnumerable<string> serviceNames, bool dryRun)
+    public IReadOnlyList<OperationLine> StopServices(
+        IEnumerable<ServiceRuntimeTarget> targets,
+        bool dryRun)
     {
         Calls.Add("StopServices");
-        if (!dryRun)
-            SetServiceStates(serviceNames, "Stopped");
-
-        return [Ok("Services stopped")];
+        return ChangeServiceStates(targets, "Stopped", dryRun);
     }
 
-    public IReadOnlyList<OperationLine> StartServices(IEnumerable<string> serviceNames, bool dryRun)
+    public IReadOnlyList<OperationLine> StartServices(
+        IEnumerable<ServiceRuntimeTarget> targets,
+        bool dryRun)
     {
         Calls.Add("StartServices");
-        if (!dryRun)
-            SetServiceStates(serviceNames, "Running");
-
-        return [Ok("Services started")];
+        return ChangeServiceStates(targets, "Running", dryRun);
     }
 
     public IReadOnlyList<OperationLine> SetTaskEnabledStates(
@@ -170,49 +187,44 @@ internal sealed class FakeUnlockerOperations : IUnlockerOperations
         if (dryRun)
             return [Ok("Would set task states")];
 
+        var lines = new List<OperationLine>();
         foreach (var target in targets)
         {
             var index = Tasks.FindIndex(task =>
                 task.Path.Equals(target.Path, StringComparison.OrdinalIgnoreCase));
-            if (index >= 0)
-                Tasks[index] = Tasks[index] with { Enabled = target.Enabled };
+            if (index < 0)
+            {
+                lines.Add(Warn("Task no longer exists"));
+                continue;
+            }
+
+            if (!TargetIdentityMatcher.TaskMatches(Tasks[index], target.ExpectedActions))
+            {
+                lines.Add(Error("Task identity changed"));
+                continue;
+            }
+
+            Tasks[index] = Tasks[index] with { Enabled = target.Enabled };
+            lines.Add(Ok("Task state set"));
         }
 
-        return [Ok("Task states set")];
+        return lines.Count == 0 ? [Ok("No task states changed")] : lines;
     }
 
-    public IReadOnlyList<OperationLine> StopTasks(IEnumerable<string> taskPaths, bool dryRun)
+    public IReadOnlyList<OperationLine> StopTasks(
+        IEnumerable<TaskRuntimeTarget> targets,
+        bool dryRun)
     {
         Calls.Add("StopTasks");
-        if (dryRun)
-            return [Ok("Would stop tasks")];
-
-        foreach (var path in taskPaths)
-        {
-            var index = Tasks.FindIndex(task =>
-                task.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
-            if (index >= 0)
-                Tasks[index] = Tasks[index] with { State = "Ready" };
-        }
-
-        return [Ok("Tasks stopped")];
+        return ChangeTaskStates(targets, "Ready", dryRun);
     }
 
-    public IReadOnlyList<OperationLine> StartTasks(IEnumerable<string> taskPaths, bool dryRun)
+    public IReadOnlyList<OperationLine> StartTasks(
+        IEnumerable<TaskRuntimeTarget> targets,
+        bool dryRun)
     {
         Calls.Add("StartTasks");
-        if (dryRun)
-            return [Ok("Would start tasks")];
-
-        foreach (var path in taskPaths)
-        {
-            var index = Tasks.FindIndex(task =>
-                task.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
-            if (index >= 0)
-                Tasks[index] = Tasks[index] with { State = "Running" };
-        }
-
-        return [Ok("Tasks started")];
+        return ChangeTaskStates(targets, "Running", dryRun);
     }
 
     public IReadOnlyList<OperationLine> RemoveRunEntries(IEnumerable<RunEntry> entries, bool dryRun)
@@ -380,17 +392,70 @@ internal sealed class FakeUnlockerOperations : IUnlockerOperations
             managedLineCount,
             string.Empty);
 
-    private void SetServiceStates(IEnumerable<string> serviceNames, string state)
+    private List<OperationLine> ChangeServiceStates(
+        IEnumerable<ServiceRuntimeTarget> targets,
+        string state,
+        bool dryRun)
     {
-        var names = serviceNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        for (var index = 0; index < Services.Count; index++)
+        var lines = new List<OperationLine>();
+        foreach (var target in targets)
         {
-            if (names.Contains(Services[index].Name))
+            var index = Services.FindIndex(service =>
+                service.Name.Equals(target.Name, StringComparison.OrdinalIgnoreCase));
+            if (index < 0)
+            {
+                lines.Add(Warn("Service no longer exists"));
+                continue;
+            }
+
+            if (!TargetIdentityMatcher.ServiceMatches(Services[index], target.ExpectedPathName))
+            {
+                lines.Add(Error("Service identity changed"));
+                continue;
+            }
+
+            if (!dryRun)
                 Services[index] = Services[index] with { State = state };
+
+            lines.Add(Ok("Service state changed"));
         }
+
+        return lines.Count == 0 ? [Ok("No service states changed")] : lines;
+    }
+
+    private List<OperationLine> ChangeTaskStates(
+        IEnumerable<TaskRuntimeTarget> targets,
+        string state,
+        bool dryRun)
+    {
+        var lines = new List<OperationLine>();
+        foreach (var target in targets)
+        {
+            var index = Tasks.FindIndex(task =>
+                task.Path.Equals(target.Path, StringComparison.OrdinalIgnoreCase));
+            if (index < 0)
+            {
+                lines.Add(Warn("Task no longer exists"));
+                continue;
+            }
+
+            if (!TargetIdentityMatcher.TaskMatches(Tasks[index], target.ExpectedActions))
+            {
+                lines.Add(Error("Task identity changed"));
+                continue;
+            }
+
+            if (!dryRun)
+                Tasks[index] = Tasks[index] with { State = state };
+
+            lines.Add(Ok("Task runtime state changed"));
+        }
+
+        return lines.Count == 0 ? [Ok("No task runtime states changed")] : lines;
     }
 
     private static OperationLine Ok(string text) => new() { Level = "OK", Text = text };
+    private static OperationLine Warn(string text) => new() { Level = "WARN", Text = text };
     private static OperationLine Error(string text) => new() { Level = "ERR", Text = text };
 
     private static string RunEntryIdentity(RunEntry entry)
@@ -420,18 +485,9 @@ internal sealed class InMemoryStateStore : IUnlockerStateStore
 
         State.ActivationRecorded = true;
 
-        Merge(
-            State.Services,
-            serviceBackups,
-            backup => backup.Name);
-        Merge(
-            State.Tasks,
-            taskBackups,
-            backup => backup.Path);
-        Merge(
-            State.RunEntries,
-            runEntryBackups,
-            backup => $"{backup.Hive}|{backup.View}|{backup.Name}");
+        MergeServices(State.Services, serviceBackups);
+        MergeTasks(State.Tasks, taskBackups);
+        MergeRunEntries(State.RunEntries, runEntryBackups);
     }
 
     public bool TryClear(out string failureDetails)
@@ -441,16 +497,64 @@ internal sealed class InMemoryStateStore : IUnlockerStateStore
         return ClearSucceeds;
     }
 
-    private static void Merge<T>(
-        ICollection<T> destination,
-        IEnumerable<T> source,
-        Func<T, string> identity)
+    private static void MergeRunEntries(
+        List<RunEntryBackup> destination,
+        IEnumerable<RunEntryBackup> source)
     {
-        var known = destination.Select(identity).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        static string Identity(RunEntryBackup backup)
+            => $"{backup.Hive}|{backup.View}|{backup.Name}";
+
         foreach (var item in source)
         {
-            if (known.Add(identity(item)))
+            var index = destination.FindIndex(existing =>
+                Identity(existing).Equals(Identity(item), StringComparison.OrdinalIgnoreCase));
+            if (index < 0)
+            {
                 destination.Add(item);
+                continue;
+            }
+
+            if (!destination[index].Value.Equals(item.Value, StringComparison.Ordinal) ||
+                destination[index].ValueKind != item.ValueKind)
+            {
+                destination[index] = item;
+            }
+        }
+    }
+
+    private static void MergeServices(
+        List<ServiceBackup> destination,
+        IEnumerable<ServiceBackup> source)
+    {
+        foreach (var item in source)
+        {
+            var index = destination.FindIndex(existing =>
+                existing.Name.Equals(item.Name, StringComparison.OrdinalIgnoreCase));
+            if (index < 0)
+                destination.Add(item);
+            else if (string.IsNullOrWhiteSpace(destination[index].PathName))
+                destination[index] = destination[index] with { PathName = item.PathName };
+            else if (!TargetIdentityMatcher.ServiceIdentityEquals(destination[index].PathName, item.PathName))
+                destination[index] = item;
+        }
+    }
+
+    private static void MergeTasks(
+        List<TaskBackup> destination,
+        IEnumerable<TaskBackup> source)
+    {
+        foreach (var item in source)
+        {
+            var index = destination.FindIndex(existing =>
+                existing.Path.Equals(item.Path, StringComparison.OrdinalIgnoreCase));
+            if (index < 0)
+                destination.Add(item);
+            else if (destination[index].Actions is null)
+                destination[index] = destination[index] with { Actions = item.Actions };
+            else if (destination[index].Actions is not null &&
+                     item.Actions is not null &&
+                     !TargetIdentityMatcher.TaskIdentityEquals(destination[index].Actions, item.Actions))
+                destination[index] = item;
         }
     }
 }
@@ -493,5 +597,69 @@ internal sealed class RecordingOperationLock : IOperationLock
 
         public void Dispose()
             => Interlocked.Exchange(ref _dispose, null)?.Invoke();
+    }
+}
+
+internal sealed class RecordingOperationJournalStore : IOperationJournalStore
+{
+    public OperationJournalEntry? Entry { get; set; }
+    public List<string> Calls { get; } = [];
+    public UnlockerOperationPhase? FailAdvanceAt { get; set; }
+    public bool FailLoad { get; set; }
+    public bool FailBegin { get; set; }
+    public bool FailComplete { get; set; }
+
+    public OperationJournalLoadResult Load()
+    {
+        Calls.Add("Load");
+        return FailLoad
+            ? OperationJournalLoadResult.Failed("journal load failed")
+            : Entry is null
+                ? OperationJournalLoadResult.Empty()
+                : OperationJournalLoadResult.Loaded(Entry);
+    }
+
+    public OperationJournalEntry Begin(
+        UnlockerOperationKind operation,
+        bool manageFirewall,
+        bool manageHosts)
+    {
+        Calls.Add($"Begin:{operation}");
+        if (FailBegin)
+            throw new IOException("journal begin failed");
+
+        var now = DateTimeOffset.UtcNow;
+        Entry = new OperationJournalEntry(
+            Guid.NewGuid(),
+            operation,
+            UnlockerOperationPhase.Prepared,
+            manageFirewall,
+            manageHosts,
+            "S-1-5-21-TEST",
+            now,
+            now);
+        return Entry;
+    }
+
+    public void Advance(Guid operationId, UnlockerOperationPhase phase)
+    {
+        Calls.Add($"Advance:{phase}");
+        if (FailAdvanceAt == phase)
+            throw new IOException("journal checkpoint failed");
+        if (Entry is null || Entry.OperationId != operationId)
+            throw new InvalidOperationException("journal identity mismatch");
+
+        Entry = Entry with { Phase = phase, UpdatedUtc = DateTimeOffset.UtcNow };
+    }
+
+    public void Complete(Guid operationId)
+    {
+        Calls.Add("Complete");
+        if (FailComplete)
+            throw new IOException("journal completion failed");
+        if (Entry is null || Entry.OperationId != operationId)
+            throw new InvalidOperationException("journal identity mismatch");
+
+        Entry = null;
     }
 }
