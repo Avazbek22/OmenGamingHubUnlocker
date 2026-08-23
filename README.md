@@ -40,13 +40,13 @@ It keeps **OMEN Gaming Hub** installed, but stops it from starting on its own an
 
 ---
 
-## 📥 Download
+<a id="download"></a>
+## Download 🚀
 
-Get the latest **portable, single-file** build from GitHub Releases:
+**Latest GitHub release:**
+👉 [https://github.com/Avazbek22/OmenGamingHubUnlocker/releases/latest](https://github.com/Avazbek22/OmenGamingHubUnlocker/releases/latest)
 
-- **Download:** https://github.com/Avazbek22/OmenGamingHubUnlocker/releases/latest
-
-> Tip: use **win-x64** for most modern OMEN devices.
+**Install via WinGet (Windows):** `winget install OlimoffDev.OmenGamingHubUnlocker`
 
 ---
 
