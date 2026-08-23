@@ -27,4 +27,13 @@
     <ProjectReference Include="..\OmenGamingHubUnlocker.E2EHost\OmenGamingHubUnlocker.E2EHost.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\..\scripts\winget-localization.ps1"
+          Link="WinGet\winget-localization.ps1"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\scripts\winget-localizations.json"
+          Link="WinGet\winget-localizations.json"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

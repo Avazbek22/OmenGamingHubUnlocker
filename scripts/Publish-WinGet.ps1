@@ -40,9 +40,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "release-helpers.ps1")
+. (Join-Path $PSScriptRoot "winget-localization.ps1")
 
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $projectPath = Join-Path $repositoryRoot "OmenGamingHubUnlocker\OmenGamingHubUnlocker.csproj"
+$localizationDataPath = Join-Path $PSScriptRoot "winget-localizations.json"
 $manifestSchemaVersion = "1.12.0"
 $commandAlias = "ogh-unlocker"
 $packageName = "Omen Gaming Hub Unlocker"
@@ -311,13 +313,7 @@ function New-InitialManifests {
         [string]$PackageVersion,
 
         [Parameter(Mandatory)]
-        [string]$ReleaseTag,
-
-        [Parameter(Mandatory)]
         [string]$ReleaseDate,
-
-        [Parameter(Mandatory)]
-        [string]$Name,
 
         [Parameter(Mandatory)]
         [object[]]$InstallerEntries
@@ -360,60 +356,12 @@ ManifestType: installer
 ManifestVersion: $manifestSchemaVersion
 "@
 
-    $localeManifest = @"
-# yaml-language-server: `$schema=https://aka.ms/winget-manifest.defaultLocale.$manifestSchemaVersion.schema.json
-
-PackageIdentifier: $Identifier
-PackageVersion: $PackageVersion
-PackageLocale: en-US
-Publisher: Olimoff Dev
-PublisherUrl: https://github.com/Avazbek22
-PublisherSupportUrl: https://github.com/$Repository/issues
-PackageName: $Name
-PackageUrl: https://github.com/$Repository
-License: MIT
-LicenseUrl: https://github.com/$Repository/blob/main/LICENSE
-Copyright: Copyright (c) 2025 Avazbek Olimov
-ShortDescription: Manages OMEN Gaming Hub background activity, startup items, and network access on Windows.
-Description: >-
-  A portable Windows utility for keeping OMEN Gaming Hub installed while
-  controlling its background activity and network access. It can stop OMEN
-  processes, set related services to Manual, disable scheduled tasks and startup
-  entries, block known HP and OMEN network endpoints, inspect the current state,
-  reset the app, and restore the original settings. It may help when OMEN Gaming
-  Hub stops working after an update or displays region-related errors. This
-  project is not affiliated with HP.
-InstallationNotes: >-
-  WinGet removes only the portable executable and command alias. To reverse
-  changes applied by this utility, run Restore original settings before
-  uninstalling the package.
-Moniker: $commandAlias
-Tags:
-- firewall
-- gaming
-- hp
-- omen
-- privacy
-- startup
-- utility
-- windows
-ReleaseNotesUrl: https://github.com/$Repository/releases/tag/$ReleaseTag
-Documentations:
-- DocumentLabel: Project documentation
-  DocumentUrl: https://github.com/$Repository#readme
-ManifestType: defaultLocale
-ManifestVersion: $manifestSchemaVersion
-"@
-
     Write-Utf8File `
         -Path (Join-Path $ManifestRoot "$Identifier.yaml") `
         -Content $versionManifest
     Write-Utf8File `
         -Path (Join-Path $ManifestRoot "$Identifier.installer.yaml") `
         -Content $installerManifest
-    Write-Utf8File `
-        -Path (Join-Path $ManifestRoot "$Identifier.locale.en-US.yaml") `
-        -Content $localeManifest
 }
 
 function Update-ExistingManifests {
@@ -484,6 +432,21 @@ function Test-PackageInstalled {
     return $LASTEXITCODE -eq 0
 }
 
+function Test-LocalManifestFilesEnabled {
+    $settingsOutput = & winget settings export --disable-interactivity 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to inspect WinGet administrator settings.`n$($settingsOutput -join [Environment]::NewLine)"
+    }
+
+    try {
+        $settings = ($settingsOutput -join [Environment]::NewLine) | ConvertFrom-Json
+        return [bool]$settings.adminSettings.LocalManifestFiles
+    }
+    catch {
+        throw "Unable to parse WinGet administrator settings: $($_.Exception.Message)"
+    }
+}
+
 function Invoke-ManifestInstallTest {
     param(
         [Parameter(Mandatory)]
@@ -498,6 +461,14 @@ function Invoke-ManifestInstallTest {
         [Parameter(Mandatory)]
         [bool]$KeepInstalled
     )
+
+    if (-not (Test-LocalManifestFilesEnabled)) {
+        throw (
+            "The local install test requires the WinGet LocalManifestFiles administrator setting. " +
+            "Enable it from an elevated terminal with 'winget settings --enable LocalManifestFiles', " +
+            "run this script again with -InstallTest, then disable it with " +
+            "'winget settings --disable LocalManifestFiles'.")
+    }
 
     if (Test-PackageInstalled -Identifier $Identifier -Name $Name) {
         throw "Package '$Identifier' is already installed. Refusing to overwrite it during the test."
@@ -653,9 +624,7 @@ if ($publishMode -eq "New") {
         -ManifestRoot $manifestRoot `
         -Identifier $PackageIdentifier `
         -PackageVersion $packageVersion `
-        -ReleaseTag $releaseTag `
         -ReleaseDate $releaseDate `
-        -Name $packageName `
         -InstallerEntries $installerEntries
 }
 else {
@@ -672,6 +641,19 @@ else {
         -Identifier $PackageIdentifier `
         -PackageVersion $packageVersion
 }
+
+Write-Step -Message "Writing localized package metadata"
+$localeManifestFiles = Write-WinGetLocaleManifests `
+    -ManifestRoot $manifestRoot `
+    -LocalizationDataPath $localizationDataPath `
+    -Identifier $PackageIdentifier `
+    -PackageVersion $packageVersion `
+    -ReleaseTag $releaseTag `
+    -Repository $Repository `
+    -Name $packageName `
+    -CommandAlias $commandAlias `
+    -ManifestSchemaVersion $manifestSchemaVersion
+Write-Host "Locale manifests   : $($localeManifestFiles.Count)"
 
 Write-Step -Message "Validating manifests"
 Invoke-ManifestValidation -ManifestRoot $manifestRoot

@@ -40,13 +40,13 @@
 
 ---
 
-## 📥 Скачать
+<a id="download"></a>
+## Скачать 🚀
 
-Последняя версия — **портативный exe-файл**, ничего устанавливать не нужно:
+**Последний релиз на GitHub:**
+👉 [https://github.com/Avazbek22/OmenGamingHubUnlocker/releases/latest](https://github.com/Avazbek22/OmenGamingHubUnlocker/releases/latest)
 
-- **Скачать:** https://github.com/Avazbek22/OmenGamingHubUnlocker/releases/latest
-
-> Совет: для большинства современных устройств OMEN подойдёт сборка **win-x64**.
+**Установить через WinGet (Windows):** `winget install OlimoffDev.OmenGamingHubUnlocker`
 
 ---
 
